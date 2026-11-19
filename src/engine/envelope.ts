@@ -5,7 +5,7 @@
 import type { Path64, Paths64 } from 'clipper2-ts';
 import { chainLabel } from './chains.js';
 import { and, area, bufferLine, dropSmall, minus, openSlivers, or, toPath, toPolygons } from './geom.js';
-import { PARAMS, RULES, TYPE_PARAMS, chainDistance, floorTop, isGateFrontage, touchesPlot, type DistanceCtx } from './rules.js';
+import { PARAMS, RULES, TYPE_PARAMS, chainDistance, floorTop, isGateFrontage, touchesPlot, zoningRoadFrontage, type DistanceCtx } from './rules.js';
 import type { BuildingType, Cap, Chain, Envelope, FloorPlate, Regime, Warning, XY, ZoneInfo } from './types.js';
 
 export interface Site {
@@ -175,20 +175,28 @@ function emptyReason(site: Site, ctx: DistanceCtx): string {
 export interface RoadFacts {
   /** Widest touching road chain with at least the gate frontage (m), or 0. */
   widestGateRoad: number;
-  /** Widest road chain that touches the plot (zoning art. 16 gates), or 0. */
+  /** Widest road chain that touches the plot, or 0 (for messages). */
   widestRoad: number;
+  /** Zoning art. 16 + 36: a touching road >= 16 m with >= 16 m of frontage (office exception). */
+  officeRoad: boolean;
+  /** Zoning art. 16 + 36: a touching road >= 12 m with >= 12 m of frontage (hotel exception). */
+  hotelRoad: boolean;
 }
 
 export function roadFacts(chains: Chain[]): RoadFacts {
   let widestGateRoad = 0;
   let widestRoad = 0;
+  let officeRoad = false;
+  let hotelRoad = false;
   for (const c of chains) {
     if (!touchesPlot(c)) continue;
     const w = c.width ?? 0;
     widestRoad = Math.max(widestRoad, w);
     if (isGateFrontage(c)) widestGateRoad = Math.max(widestGateRoad, w);
+    if (zoningRoadFrontage(c, PARAMS.officeGateWidth)) officeRoad = true;
+    if (zoningRoadFrontage(c, PARAMS.hotelGateWidth)) hotelRoad = true;
   }
-  return { widestGateRoad, widestRoad };
+  return { widestGateRoad, widestRoad, officeRoad, hotelRoad };
 }
 
 /** GFA caps that do not depend on geometry (FAR, gates, zoning bans). */
@@ -205,13 +213,13 @@ export function fixedCaps(site: Site, regime: Regime): Cap[] {
     }
   }
   if (!site.nearStation) {
-    if (site.type === 'office' && rf.widestRoad < PARAMS.officeGateWidth) {
-      caps.push({ id: 'Z16-OFFICE', label: 'office without a 16 m road or station: 10,000 m2', value: PARAMS.officeGateGfa });
+    if (site.type === 'office' && !rf.officeRoad) {
+      caps.push({ id: 'Z16-OFFICE', label: 'office without 16 m of frontage on a 16 m road, or a station: 10,000 m2', value: PARAMS.officeGateGfa });
     }
-    if (site.type === 'hotel' && rf.widestRoad < PARAMS.hotelGateWidth) {
+    if (site.type === 'hotel' && !rf.hotelRoad) {
       caps.push({
         id: 'Z16-HOTEL',
-        label: `hotel without a 12 m road or station: 80 rooms x ${PARAMS.hotelGfaPerRoom} m2`,
+        label: `hotel without 12 m of frontage on a 12 m road, or a station: 80 rooms x ${PARAMS.hotelGfaPerRoom} m2`,
         value: PARAMS.hotelGateRooms * PARAMS.hotelGfaPerRoom,
       });
     }

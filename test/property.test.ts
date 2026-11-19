@@ -147,9 +147,18 @@ function twoXMode(r: EngineResult, pr: number[][], c: Chain, plates: FloorPlate[
     const art = o.reasons.find((x) => x.cite === (corner ? 'mr55-update.txt:452' : 'mr55-update.txt:447'));
     if (art && Number.isNaN(art.d)) notAssessable = true;
     else if ((pr[c.id] ?? []).includes(w.id)) {
-      // the engine relieves c near w; allowed only when the 60 m building condition is the sole reason
-      if (corner && (facts.buildingLengthAlongNarrowM ?? 0) > 60 && O.reliefEligible({ ...facts, buildingLengthAlongNarrowM: 0 }).eligible) allow = 'D6';
-      if (!corner && (facts.buildingWidthAlongWideM ?? 0) > 60 && O.reliefEligible({ ...facts, buildingWidthAlongWideM: 0 }).eligible) allow = 'D7';
+      // The engine relieves c near w although the oracle refuses for the 60 m building
+      // condition. Since the D6 / D7 fix the engine relieves a corner only when the plot is
+      // <= 60 m along the narrower road, so for chains that meet (a corner in both readings)
+      // this must never happen. Non-adjacent skewed roads stay a classification difference
+      // (the engine treats them as flanking, art. 45; this test as a corner) and are skipped.
+      if (corner && (facts.buildingLengthAlongNarrowM ?? 0) > 60 && O.reliefEligible({ ...facts, buildingLengthAlongNarrowM: 0 }).eligible) {
+        expect(t, `engine relieves a corner whose building is ${facts.buildingLengthAlongNarrowM} m along the narrower road (D6)`).toBeNull();
+        allow = 'D6';
+      }
+      if (!corner && (facts.buildingWidthAlongWideM ?? 0) > 60 && O.reliefEligible({ ...facts, buildingWidthAlongWideM: 0 }).eligible) {
+        expect.fail(`engine relieves two flanking roads with a building ${facts.buildingWidthAlongWideM} m along the wider road (D7)`);
+      }
     }
   }
   if (notAssessable) {

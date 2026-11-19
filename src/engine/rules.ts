@@ -249,6 +249,15 @@ export function touchesPlot(c: Chain): boolean {
   return c.role === 'road' && c.gap <= PARAMS.frontageGapTol;
 }
 
+/**
+ * Zoning art. 16 road exceptions read with art. 36 (2)-(3) (`mr2556.txt:3102`, `3108`): the
+ * plot must have a side at least as long as the road class (12 m on a >= 12 m road, 16 m on a
+ * >= 16 m road) abutting that road. Road width alone is not enough (oracle disagreement D3).
+ */
+export function zoningRoadFrontage(c: Chain, roadClass: number): boolean {
+  return touchesPlot(c) && (c.width ?? 0) >= roadClass && c.length >= roadClass - 0.001;
+}
+
 /** MR 33 art. 2 frontage: a touching road chain at least 12 m long (1 mm float tolerance). */
 export function isGateFrontage(c: Chain): boolean {
   return touchesPlot(c) && c.length >= PARAMS.highGateFrontage - 0.001;

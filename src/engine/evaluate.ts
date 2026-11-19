@@ -50,15 +50,56 @@ export function reliefPartners(chains: Chain[], enabled: boolean): number[][] {
     const t = turnAt(a, b) ?? turnAt(b, a);
     return t !== null && t < PARAMS.cornerTurnDeg;
   };
+  // the chains cover the whole plot outline, so their points bound any building on it
+  const plotPts = chains.flatMap((c) => c.points);
   for (const n of chains) {
     if (n.role !== 'road') continue;
     for (const w of chains) {
       if (w.role !== 'road' || w.id === n.id || (w.width ?? 0) <= (n.width ?? 0)) continue;
       if (sameRoad(n, w)) continue;
-      if (polylineDist(n.points, w.points) <= PARAMS.reliefReach) out[n.id]!.push(w.id);
+      if (polylineDist(n.points, w.points) > PARAMS.reliefReach) continue;
+      // Art. 46 (corner): building length along the narrower road <= 60 m. Art. 45 (two roads
+      // flanking): building width along the wider road <= 60 m. The building is unknown here,
+      // so relief is granted only when the PLOT is at most 60 m long in that direction; then
+      // every building on it qualifies (stricter where a shorter building on a longer plot
+      // would also qualify). Oracle disagreements D6 / D7.
+      // Roads that meet are a corner (art. 46). Roads that do not meet may be flanking (art. 45)
+      // or, if skewed, read as a corner; both conditions are required for them so neither
+      // reading finds the engine laxer.
+      const corner = turnAt(n, w) !== null || turnAt(w, n) !== null;
+      const tooLong = corner
+        ? extentAlong(plotPts, n) > PARAMS.reliefReach
+        : extentAlong(plotPts, w) > PARAMS.reliefReach || extentAlong(plotPts, n) > PARAMS.reliefReach;
+      if (tooLong) continue;
+      out[n.id]!.push(w.id);
     }
   }
   return out;
+}
+
+/** Length of the plot's projection onto a chain's main direction (its longest segment). */
+function extentAlong(pts: XY[], c: Chain): number {
+  let best = -1;
+  let ux = 1;
+  let uy = 0;
+  for (let i = 0; i + 1 < c.points.length; i++) {
+    const a = c.points[i]!;
+    const b = c.points[i + 1]!;
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (L > best) {
+      best = L;
+      ux = (b[0] - a[0]) / L;
+      uy = (b[1] - a[1]) / L;
+    }
+  }
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const p of pts) {
+    const t = p[0] * ux + p[1] * uy;
+    lo = Math.min(lo, t);
+    hi = Math.max(hi, t);
+  }
+  return hi - lo;
 }
 
 function appliedRules(site: Site, chosen: Envelope, low: Envelope, high: Envelope, partners: number[][]): AppliedRule[] {
@@ -74,8 +115,8 @@ function appliedRules(site: Site, chosen: Envelope, low: Envelope, high: Envelop
     'Z16-FAR': [`zone ${site.zone.code}: FAR ${site.zone.far} -> GFA <= ${n(site.zone.far * A)} m2`, true],
     'Z16-OSR': [`open space >= ${site.zone.osrPct}% of GFA (${n((site.zone.osrPct / 100) * chosen.permittedGfa)} m2 at ${n(chosen.permittedGfa)} m2)`, true],
     'Z16-PERM': ['not assessed', true],
-    'Z16-HOTEL': [site.type === 'hotel' ? (site.nearStation || rf.widestRoad >= PARAMS.hotelGateWidth ? 'waived (12 m road or station)' : `<= 80 rooms (~${n(PARAMS.hotelGateRooms * PARAMS.hotelGfaPerRoom, 0)} m2)`) : 'not a hotel', site.type === 'hotel'],
-    'Z16-OFFICE': [site.type === 'office' ? (site.nearStation || rf.widestRoad >= PARAMS.officeGateWidth ? 'waived (16 m road or station)' : '<= 10,000 m2') : 'not an office', site.type === 'office'],
+    'Z16-HOTEL': [site.type === 'hotel' ? (site.nearStation || rf.hotelRoad ? 'waived (12 m frontage on a 12 m road, or station)' : `<= 80 rooms (~${n(PARAMS.hotelGateRooms * PARAMS.hotelGfaPerRoom, 0)} m2)`) : 'not a hotel', site.type === 'hotel'],
+    'Z16-OFFICE': [site.type === 'office' ? (site.nearStation || rf.officeRoad ? 'waived (16 m frontage on a 16 m road, or station)' : '<= 10,000 m2') : 'not an office', site.type === 'office'],
     'ORD52-OPEN': [`${tp.dwelling ? 30 : 10}% of plot = ${n((tp.dwelling ? 0.3 : 0.1) * A)} m2 (${tp.label}${site.type === 'hotel' ? ', non-dwelling call' : ''})`, true],
     'MR33-6': [`${tp.dwelling ? 30 : 10}% of plot (same as above)`, chosen.regime === 'high'],
     'MR55-33': [`${tp.dwelling ? 30 : 10}% of the largest floor`, true],

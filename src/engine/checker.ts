@@ -244,13 +244,18 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
   // gates
   let widestGate = 0;
   let widestRoad = 0;
+  let officeRoad = false; // zoning art. 16 + 36: >= 16 m of frontage on a >= 16 m road
+  let hotelRoad = false; // >= 12 m of frontage on a >= 12 m road
   for (const c of site.chains) {
     // only a road that touches the plot is frontage (zoning art. 16, MR 33 art. 2)
     if (c.role !== 'road' || c.gap > PARAMS.frontageGapTol) continue;
     let L = 0;
     for (let i = 0; i + 1 < c.points.length; i++) L += Math.hypot(c.points[i + 1]![0] - c.points[i]![0], c.points[i + 1]![1] - c.points[i]![1]);
-    widestRoad = Math.max(widestRoad, c.width ?? 0);
-    if (L >= PARAMS.highGateFrontage - 0.001) widestGate = Math.max(widestGate, c.width ?? 0);
+    const W = c.width ?? 0;
+    widestRoad = Math.max(widestRoad, W);
+    if (L >= PARAMS.highGateFrontage - 0.001) widestGate = Math.max(widestGate, W);
+    if (W >= PARAMS.officeGateWidth && L >= PARAMS.officeGateWidth - 0.001) officeRoad = true;
+    if (W >= PARAMS.hotelGateWidth && L >= PARAMS.hotelGateWidth - 0.001) hotelRoad = true;
   }
   if (ms.high) {
     const needW = ms.gfa > PARAMS.bigGateGfa ? PARAMS.bigGateWidth : PARAMS.highGateWidth;
@@ -260,17 +265,17 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
     checks.push(row('mr33-5', 'MR33-5', 'FAR <= 10 (high-rise)', `<= ${m2(10 * A)}`, m2(ms.gfa), ms.gfa <= 10 * A + 0.01 ? 'pass' : 'fail'));
   }
   if (site.type === 'office') {
-    const ok = ms.gfa <= PARAMS.officeGateGfa || widestRoad >= PARAMS.officeGateWidth || site.nearStation;
-    checks.push(row('office-gate', 'Z16-OFFICE', 'Office over 10,000 m2 needs a 16 m road or a station', '<= 10,000 m2, or 16 m road, or station', `${m2(ms.gfa)}, widest road ${widestRoad} m${site.nearStation ? ', near station' : ''}`, ok ? 'pass' : 'fail'));
+    const ok = ms.gfa <= PARAMS.officeGateGfa || officeRoad || site.nearStation;
+    checks.push(row('office-gate', 'Z16-OFFICE', 'Office over 10,000 m2 needs 16 m of frontage on a 16 m road, or a station', '<= 10,000 m2, or 16 m frontage on a 16 m road, or station', `${m2(ms.gfa)}, widest road ${widestRoad} m${officeRoad ? ' (16 m frontage)' : ''}${site.nearStation ? ', near station' : ''}`, ok ? 'pass' : 'fail'));
   }
   if (site.type === 'hotel') {
     // the same cap as the engine (envelope.ts fixedCaps): 80 rooms x 50 m2 = 4,000 m2 of GFA
     const cap = PARAMS.hotelGateRooms * PARAMS.hotelGfaPerRoom;
-    const ok = ms.gfa <= cap + AREA_EPS || widestRoad >= PARAMS.hotelGateWidth || site.nearStation;
+    const ok = ms.gfa <= cap + AREA_EPS || hotelRoad || site.nearStation;
     checks.push(row(
-      'hotel-gate', 'Z16-HOTEL', 'Hotel over 80 rooms needs a 12 m road or a station',
-      `<= ${m2(cap)} (80 rooms x ${PARAMS.hotelGfaPerRoom} m2), or 12 m road, or station`,
-      `${m2(ms.gfa)} (~${fmt(ms.gfa / PARAMS.hotelGfaPerRoom, 1)} rooms), widest road ${widestRoad} m${site.nearStation ? ', near station' : ''}`,
+      'hotel-gate', 'Z16-HOTEL', 'Hotel over 80 rooms needs 12 m of frontage on a 12 m road, or a station',
+      `<= ${m2(cap)} (80 rooms x ${PARAMS.hotelGfaPerRoom} m2), or 12 m frontage on a 12 m road, or station`,
+      `${m2(ms.gfa)} (~${fmt(ms.gfa / PARAMS.hotelGfaPerRoom, 1)} rooms), widest road ${widestRoad} m${hotelRoad ? ' (12 m frontage)' : ''}${site.nearStation ? ', near station' : ''}`,
       ok ? 'pass' : 'fail',
     ));
   }

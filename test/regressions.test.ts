@@ -153,6 +153,59 @@ describe('Codex review regressions', () => {
     expect(fails(b)).toEqual([]);
   });
 
+  it('D3 office: a 16 m road waives the 10,000 m2 cap only with 16 m of frontage (zoning art. 36(3))', () => {
+    // south edge split: the first `front` metres are the 16 m road, the rest private; a 12 m
+    // road on the north side opens the high regime (MR 33 art. 2) so the office cap can bind.
+    const plot = (front: number) => ok({
+      ring: [[0, 0], [front, 0], [100, 0], [100, 50], [0, 50]],
+      edges: [road(16, { name: 'Main' }), P, P, road(12, { name: 'Soi' }), P],
+      type: 'office', zone: { code: 'Y9', far: 7, osrPct: 4.5 },
+    });
+    const short = plot(5);
+    expect(short.rules.find((x) => x.id === 'Z16-OFFICE')!.value).toBe('<= 10,000 m2');
+    expect(short.regimes.high.caps.some((c) => c.id === 'Z16-OFFICE')).toBe(true);
+    for (const d of short.designs) expect(d.gfa).toBeLessThanOrEqual(10000 + 1e-6);
+    expect(fails(short)).toEqual([]);
+    const full = plot(16);
+    expect(full.rules.find((x) => x.id === 'Z16-OFFICE')!.value).toMatch(/^waived/);
+    expect(full.regimes.high.caps.some((c) => c.id === 'Z16-OFFICE')).toBe(false);
+  });
+
+  it('D3 hotel: a 12 m road waives the 80-room cap only with 12 m of frontage (zoning art. 36(2))', () => {
+    const plot = (front: number) => ok({
+      ring: [[0, 0], [front, 0], [100, 0], [100, 50], [0, 50]],
+      edges: [road(12, { name: 'Main' }), P, P, road(10, { name: 'Soi' }), P],
+      type: 'hotel', zone: { code: 'Y9', far: 7, osrPct: 4.5 },
+    });
+    expect(plot(11).rules.find((x) => x.id === 'Z16-HOTEL')!.value).toMatch(/^<= 80 rooms/);
+    expect(fails(plot(11))).toEqual([]);
+    expect(plot(12).rules.find((x) => x.id === 'Z16-HOTEL')!.value).toMatch(/^waived/);
+  });
+
+  it('D6 corner relief needs the plot within 60 m along the narrower road (MR 55 art. 46)', () => {
+    // 30 m road on the south (wide), 12 m road on the west (narrow); plot depth along the narrow road varies
+    const corner = (depth: number) => ok({
+      ring: [[0, 0], [50, 0], [50, depth], [0, depth]],
+      edges: [road(30, { name: 'wide' }), P, P, road(12, { name: 'narrow' })],
+    });
+    expect(corner(40).rules.find((x) => x.id === 'MR55-46')!.applies).toBe(true);
+    const long = corner(100);
+    expect(long.rules.find((x) => x.id === 'MR55-46')!.applies).toBe(false);
+    expect(fails(long)).toEqual([]);
+  });
+
+  it('D7 two-road relief needs the plot within 60 m along the wider road (MR 55 art. 45)', () => {
+    // 30 m road on the south, 12 m road on the north, 40 m apart; plot length along the wide road varies
+    const flank = (len: number) => ok({
+      ring: [[0, 0], [len, 0], [len, 40], [0, 40]],
+      edges: [road(30, { name: 'A' }), P, road(12, { name: 'B' }), P],
+    });
+    expect(flank(50).rules.find((x) => x.id === 'MR55-46')!.applies).toBe(true);
+    const long = flank(100);
+    expect(long.rules.find((x) => x.id === 'MR55-46')!.applies).toBe(false);
+    expect(fails(long)).toEqual([]);
+  });
+
   it('#10 the checker gives the same verdict whether floors share one polygons array or not', () => {
     const r = ok({ edges: [road(30), P, P, road(1)] });
     const chains = buildChains(r.plot.ring, r.plot.edges);
