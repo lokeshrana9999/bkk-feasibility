@@ -1,0 +1,22 @@
+{
+  "name": "gm-assignment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "demo": "tsx scripts/demo.ts"
+  },
+  "dependencies": {
+    "clipper2-ts": "2.0.1-18"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "fast-check": "4.3.0",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
+  }
+}

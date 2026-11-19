@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+scratch/venv/
+sources/data/heights/gloBFP/
+*.npy
+*.pkl
+sources/data/
+scratch/
+*.pdf
+.env.local
