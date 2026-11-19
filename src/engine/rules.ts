@@ -67,7 +67,7 @@ const rows: RuleDef[] = [
   {
     id: 'ORD50-ROAD', source: `${ORD} / ${MR55}`, article: 'ord. art. 50; MR 55 art. 41', kind: 'distance',
     quoteTh: '(1) ถ้าถนนสาธารณะนั้นมีความกว้างน้อยกว่า 10 เมตร ให้ร่นแนวอาคารห่างจากกึ่งกลางถนนสาธารณะอย่างน้อย 6 เมตร (2) ถ้าถนนสาธารณะนั้นมีความกว้างตั้งแต่ 10 เมตรขึ้นไป แต่ไม่เกิน 20 เมตร ให้ร่นแนวอาคารห่างจากเขตถนนสาธารณะอย่างน้อย 1 ใน 10 ของความกว้างของถนนสาธารณะ (3) ถ้าถนนสาธารณะนั้นมีความกว้างเกิน 20 เมตรขึ้นไป ให้ร่นแนวอาคารห่างจากเขตถนนสาธารณะอย่างน้อย 2 เมตร',
-    text: 'Buildings > 2 storeys or > 8 m: road W < 10 m: 6 m from the centreline; 10-20 m: W/10 from the road line; > 20 m: 2 m. Measured from the plot edge: minus the edge gap.',
+    text: 'Buildings > 2 storeys or > 8 m, large buildings (> 2,000 m2, or >= 15 m and > 1,000 m2), and commercial or public buildings at any height (offices: art. 5(106); hotels: art. 5(109)): road W < 10 m: 6 m from the centreline; 10-20 m: W/10 from the road line; > 20 m: 2 m. Measured from the plot edge: minus the edge gap.',
   },
   {
     id: 'ORD49-2X', source: `${ORD} / ${MR55}`, article: 'ord. art. 49; MR 55 art. 44', kind: 'distance',
@@ -82,7 +82,7 @@ const rows: RuleDef[] = [
   {
     id: 'MR55-50-PRIV', source: `${MR55} / ${ORD}`, article: 'MR 55 art. 50; ord. art. 54', kind: 'distance',
     quoteTh: '(1) อาคารที่มีความสูงไม่เกิน 9 เมตร ผนังหรือระเบียงต้องอยู่ห่างเขตที่ดินไม่น้อยกว่า 2 เมตร (2) อาคารที่มีความสูงเกิน 9 เมตร แต่ไม่ถึง 23 เมตร ผนังหรือระเบียงต้องอยู่ห่างเขตที่ดินไม่น้อยกว่า 3 เมตร',
-    text: 'Walls with openings: 2 m from a private boundary if the building is <= 9 m tall, 3 m if taller (whole building, MR 55 reading; stricter than the ordinance\'s per-floor wording).',
+    text: 'Walls with openings, the larger of two readings: MR 55 art. 50 by building height (2 m up to 9 m, 3 m above, whole building) and ord. art. 54 by floor (3 m from floor 3 up or above 9 m, even in a building under 9 m).',
   },
   {
     id: 'ORD55-CLEAR', source: ORD, article: 'art. 55', kind: 'distance',
@@ -171,6 +171,11 @@ export const PARAMS = Object.freeze({
   hotelGateWidth: 12,
   hotelGfaPerRoom: 50, // m2 GFA per room, written call
   reliefReach: 60, // m, MR 55 arts. 45-46
+  // Two road chains meeting at a turn smaller than this are one road changing width, not a corner.
+  cornerTurnDeg: 30,
+  // A road edge counts as frontage (MR 33 art. 2, zoning art. 16 "on the road") only if the
+  // plot touches it: gap up to this much is map noise; more means other land in between.
+  frontageGapTol: 0.5, // m, written call
   maxFloors: 60,
   minPlateArea: 40, // m2, smaller parts are dropped
   slivers: 1.5, // m, opening width
@@ -217,8 +222,36 @@ export function twoXDistance(z: number, W: number, gap: number): number {
   return (z + PARAMS.parapet) / 2 - W - gap;
 }
 
-export function privateSetback(buildingH: number): number {
-  return buildingH <= 9 ? 2 : 3;
+/**
+ * ORD50-ROAD applies (ord. art. 50 para. 2, MR 55 art. 41 para. 2) to buildings over
+ * 2 storeys or 8 m, large buildings (ord. art. 5(101): > 2,000 m2, or >= 15 m and
+ * > 1,000 m2), commercial buildings (5(106), trade or business services: offices) and
+ * public buildings (5(109), which names hotels), at any height. The ordinance's
+ * small-dwelling exemption is not in MR 55, so it is not applied.
+ */
+export function roadSetbackApplies(b: { floors: number; height: number; gfa: number; dwelling: boolean }): boolean {
+  return b.floors > 2 || b.height > 8 || !b.dwelling || b.gfa > 2000 || (b.height >= 15 && b.gfa > 1000);
+}
+
+/**
+ * MR55-50-PRIV, the larger of two readings: MR 55 art. 50 by building height (2 m up
+ * to 9 m, 3 m above) and ord. art. 54 by floor (2 m for floors 1-2 up to 9 m, 3 m from
+ * floor 3 or above 9 m). A 3-storey building under 9 m needs 3 m on floor 3.
+ */
+export function privateSetback(buildingH: number, level = 1, z = 0): number {
+  const mr55 = buildingH <= 9 ? 2 : 3;
+  const ord54 = level >= 3 || z > 9 ? 3 : 2;
+  return Math.max(mr55, ord54);
+}
+
+/** Zoning art. 16 "ตั้งอยู่ริมถนน" (located on the road): a road chain that touches the plot. */
+export function touchesPlot(c: Chain): boolean {
+  return c.role === 'road' && c.gap <= PARAMS.frontageGapTol;
+}
+
+/** MR 33 art. 2 frontage: a touching road chain at least 12 m long (1 mm float tolerance). */
+export function isGateFrontage(c: Chain): boolean {
+  return touchesPlot(c) && c.length >= PARAMS.highGateFrontage - 0.001;
 }
 
 export function clearAround(buildingH: number): number {
@@ -230,11 +263,13 @@ export function canalSetback(C: number, gap: number): number {
 }
 
 export interface DistanceCtx {
-  /** Top of the floor being placed. */
+  /** Floor being placed (1-based) and its top. */
+  level: number;
   z: number;
-  /** Final building height and storeys (bands of arts. 50, 54, 55). */
+  /** Final building height (bands of arts. 50, 54, 55). */
   buildingH: number;
-  floors: number;
+  /** ORD50-ROAD applies (roadSetbackApplies; the envelope always passes true). */
+  art50: boolean;
   /** Building is high-rise or extra-large (MR 33 applies). */
   high: boolean;
 }
@@ -249,11 +284,10 @@ export function chainDistance(c: Chain, ctx: DistanceCtx): { base: number; twoX:
   let twoX = 0;
   if (c.role === 'road') {
     const W = c.width ?? 0;
-    const tall = ctx.floors > 2 || ctx.buildingH > 8;
-    parts.push({ rule: 'ORD50-ROAD', d: tall ? roadSetback(W, c.gap) : narrowRoadSetback(W, c.gap) });
+    parts.push({ rule: 'ORD50-ROAD', d: ctx.art50 ? roadSetback(W, c.gap) : narrowRoadSetback(W, c.gap) });
     twoX = Math.max(0, twoXDistance(ctx.z, W, c.gap));
   } else if (c.role === 'private') {
-    if (!ctx.high) parts.push({ rule: 'MR55-50-PRIV', d: privateSetback(ctx.buildingH) });
+    if (!ctx.high) parts.push({ rule: 'MR55-50-PRIV', d: privateSetback(ctx.buildingH, ctx.level, ctx.z) });
   } else {
     parts.push({ rule: 'MR55-42-CANAL', d: canalSetback(c.width ?? 0, c.gap) });
   }

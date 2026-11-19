@@ -9,7 +9,7 @@ import {
   segmentsToPolylineDist,
 } from './measure.js';
 import {
-  PARAMS, RULES, TYPE_PARAMS, canalSetback, clearAround, narrowRoadSetback, privateSetback, roadSetback,
+  PARAMS, RULES, TYPE_PARAMS, canalSetback, clearAround, narrowRoadSetback, privateSetback, roadSetback, roadSetbackApplies,
   twoXDistance,
 } from './rules.js';
 import type { BuildingType, Chain, CheckRow, CheckStatus, FloorPlate, XY, ZoneInfo } from './types.js';
@@ -77,17 +77,22 @@ function chainMeasures(site: CheckSite, c: Chain, plates: FloorPlate[], segCache
     return d;
   };
   let minDist = Infinity;
-  for (const p of plates) minDist = Math.min(minDist, plainDist(p));
+  const perLevel = plates.map((p) => plainDist(p));
+  for (const d of perLevel) minDist = Math.min(minDist, d);
   let worst2x = { margin: Infinity, level: 0, dist: Infinity, req: 0 };
   if (c.role === 'road') {
     const partners = site.reliefPartners[c.id] ?? [];
-    const reliefCache = new Map<unknown, number>();
+    // the relief measurement depends on the floor's requirement, so it is cached per
+    // (geometry, requirement), never per geometry alone
+    const reliefCache = new Map<unknown, Map<number, number>>();
     plates.forEach((p) => {
       const req = twoXDistance(p.z1, c.width ?? 0, c.gap);
       const segs = segsOf(p);
       let dist: number;
+      const byReq = reliefCache.get(p.polygons) ?? new Map<number, number>();
+      reliefCache.set(p.polygons, byReq);
       if (partners.length === 0) dist = plainDist(p);
-      else if (reliefCache.has(p.polygons)) dist = reliefCache.get(p.polygons)!;
+      else if (byReq.has(req)) dist = byReq.get(req)!;
       else {
         // relief: points within 60 m of a wider road are exempt (sampled every 0.25 m)
         // Reported distance: the smallest sample distance among samples that can matter, ie
@@ -103,13 +108,13 @@ function chainMeasures(site: CheckSite, c: Chain, plates: FloorPlate[], segCache
           }
           dist = dq;
         }
-        reliefCache.set(p.polygons, dist);
+        byReq.set(req, dist);
       }
       const margin = dist - req;
       if (margin < worst2x.margin) worst2x = { margin, level: p.level, dist, req };
     });
   }
-  return { minDist, worst2x };
+  return { minDist, perLevel, worst2x };
 }
 
 export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: CheckRow[]; measured: Measured } {
@@ -181,15 +186,15 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
   checks.push(row('open-floor', 'MR55-33', `Open space >= ${plotPct * 100}% of the largest floor`, `>= ${m2(plotPct * largest)}`, m2(ms.openSpace), ms.openSpace >= plotPct * largest - 0.01 ? 'pass' : 'fail'));
 
   // distances per chain
-  const tall = ms.floors > 2 || ms.height > 8;
+  const art50 = roadSetbackApplies({ floors: ms.floors, height: ms.height, gfa: ms.gfa, dwelling });
   let clearMin = Infinity;
   const segCache = new Map<unknown, [XY, XY][]>();
   for (const c of site.chains) {
-    const { minDist, worst2x } = chainMeasures(site, c, plates, segCache);
+    const { minDist, perLevel, worst2x } = chainMeasures(site, c, plates, segCache);
     clearMin = Math.min(clearMin, minDist);
     const lbl = chainLabel(c);
     if (c.role === 'road') {
-      const req = tall ? roadSetback(c.width ?? 0, c.gap) : narrowRoadSetback(c.width ?? 0, c.gap);
+      const req = art50 ? roadSetback(c.width ?? 0, c.gap) : narrowRoadSetback(c.width ?? 0, c.gap);
       checks.push(row(`road-${c.id}`, 'ORD50-ROAD', `Road setback from ${lbl}`, `>= ${fmt(req)} m`, `${fmt(minDist, 3)} m`, minDist >= req - TOL ? 'pass' : 'fail'));
       const relief = (site.reliefPartners[c.id] ?? []).length > 0;
       checks.push(row(
@@ -201,8 +206,14 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
       ));
     } else if (c.role === 'private') {
       if (!ms.high) {
-        const req = privateSetback(ms.height);
-        checks.push(row(`private-${c.id}`, 'MR55-50-PRIV', `Setback from ${lbl}`, `>= ${fmt(req)} m`, `${fmt(minDist, 3)} m`, minDist >= req - TOL ? 'pass' : 'fail'));
+        // per floor: MR 55 art. 50 (building height) and ord. art. 54 (floor 3 up / above 9 m)
+        let worst = { margin: Infinity, level: 0, req: 0, dist: Infinity };
+        plates.forEach((p, i) => {
+          const req = privateSetback(ms.height, p.level, p.z1);
+          const margin = perLevel[i]! - req;
+          if (margin < worst.margin) worst = { margin, level: p.level, req, dist: perLevel[i]! };
+        });
+        checks.push(row(`private-${c.id}`, 'MR55-50-PRIV', `Setback from ${lbl}`, `floor ${worst.level}: >= ${fmt(worst.req)} m`, `${fmt(worst.dist, 3)} m`, worst.margin >= -TOL ? 'pass' : 'fail'));
       }
     } else {
       const req = canalSetback(c.width ?? 0, c.gap);
@@ -219,11 +230,12 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
   let widestGate = 0;
   let widestRoad = 0;
   for (const c of site.chains) {
-    if (c.role !== 'road') continue;
+    // only a road that touches the plot is frontage (zoning art. 16, MR 33 art. 2)
+    if (c.role !== 'road' || c.gap > PARAMS.frontageGapTol) continue;
     let L = 0;
     for (let i = 0; i + 1 < c.points.length; i++) L += Math.hypot(c.points[i + 1]![0] - c.points[i]![0], c.points[i + 1]![1] - c.points[i]![1]);
     widestRoad = Math.max(widestRoad, c.width ?? 0);
-    if (L >= PARAMS.highGateFrontage) widestGate = Math.max(widestGate, c.width ?? 0);
+    if (L >= PARAMS.highGateFrontage - 0.001) widestGate = Math.max(widestGate, c.width ?? 0);
   }
   if (ms.high) {
     const needW = ms.gfa > PARAMS.bigGateGfa ? PARAMS.bigGateWidth : PARAMS.highGateWidth;

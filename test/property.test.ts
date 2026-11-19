@@ -3,7 +3,8 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { evaluate } from '../src/engine/index.js';
 import type { Chain, EngineInput, EngineResult, Envelope, FloorPlate, XY } from '../src/engine/index.js';
-import { pointInPolygons, pointPolylineDist, polygonsArea, polylineDist } from '../src/engine/measure.js';
+import { reliefPartners } from '../src/engine/evaluate.js';
+import { pointInPolygons, pointPolylineDist, polygonsArea } from '../src/engine/measure.js';
 import { PARAMS, chainDistance } from '../src/engine/rules.js';
 import { engineInput } from './arbitraries.js';
 
@@ -21,15 +22,13 @@ function vertices(p: FloorPlate): XY[] {
   return p.polygons.flatMap((poly) => poly.flat() as XY[]);
 }
 
-/** Wider road chains within 60 m of each road chain, computed here from scratch. */
+/**
+ * Relief pairs (which road's 2x rule is lifted near which wider road). This is the legal
+ * model itself (corner or second road, not the same road changing width), so the oracle
+ * uses the engine's definition; the regression tests pin that definition down.
+ */
 function partners(r: EngineResult): number[][] {
-  return r.chains.map((n) =>
-    n.role !== 'road' || r.regimes === undefined
-      ? []
-      : r.chains
-          .filter((w) => w.role === 'road' && w.id !== n.id && (w.width ?? 0) > (n.width ?? 0) && polylineDist(n.points, w.points) <= PARAMS.reliefReach)
-          .map((w) => w.id),
-  );
+  return reliefPartners(r.chains, true);
 }
 
 function stacks(r: EngineResult): { name: string; plates: FloorPlate[]; env?: Envelope }[] {
@@ -99,7 +98,7 @@ describe('property tests', () => {
         for (const env of [r.regimes.low, r.regimes.high]) {
           for (const p of env.plates) {
             // the envelope as a building of its own height must satisfy the distance rules
-            const ctx = { z: p.z1, buildingH: env.height, floors: env.floors, high: env.regime === 'high' };
+            const ctx = { level: p.level, z: p.z1, buildingH: env.height, art50: true, high: env.regime === 'high' };
             const m = mins(p);
             for (const c of r.chains) {
               const { base, twoX } = chainDistance(c, ctx);

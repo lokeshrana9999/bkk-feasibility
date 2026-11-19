@@ -17,7 +17,7 @@ for (const i of fc.sample(engineInput, { numRuns: N, seed: 7 })) {
   for (const env of [r.regimes.low, r.regimes.high]) {
     const done = new Map<unknown, number>();
     for (const p of env.plates) {
-      const ctx = { z: p.z1, buildingH: env.height, floors: env.floors, high: env.regime === 'high' };
+      const ctx = { level: p.level, z: p.z1, buildingH: env.height, art50: true, high: env.regime === 'high' };
       for (const c of r.chains) {
         const { base, twoX } = chainDistance(c, ctx);
         for (const v of p.polygons.flatMap((q) => q.flat() as XY[])) {

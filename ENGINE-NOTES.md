@@ -6,11 +6,13 @@ The pure TypeScript engine in `src/engine/`. One entry point, `evaluate(input)`,
 
 Places where `assumptions.md` or `engine-plan.md` and the source text disagree, or where the text leaves room. In each case the engine applies the stricter reading and goes on.
 
-1. **Private-boundary setback: whole building, not per floor.** The plan says "2 m while z_k <= 9 m, 3 m above". MR 55 art. 50 sets the distance by the *building's* height: (1) a building no taller than 9 m keeps walls with openings 2 m from the boundary; (2) a building taller than 9 m but under 23 m keeps them 3 m away (`mr55-update.txt` 513-517). Ordinance art. 54 instead reads per floor: floors 1-2 or up to 9 m at 2 m, floor 3 up or above 9 m at 3 m. The engine applies MR 55: every floor of a building over 9 m sits 3 m back. G2 tests this (3 m on all seven floors). Verify with a Thai practitioner.
+1. **Private-boundary setback: the larger of two readings.** MR 55 art. 50 sets the distance by the *building's* height: (1) up to 9 m, walls with openings 2 m from the boundary; (2) over 9 m and under 23 m, 3 m (`mr55-update.txt` 513-517). Ordinance art. 54 reads per floor: floors 1-2 up to 9 m at 2 m, floor 3 up or above 9 m at 3 m. Neither is always stricter (MR 55 for a tall building's lower floors, the ordinance for floor 3 of a building under 9 m), so the engine takes the larger per floor. G2 tests MR 55 (3 m on all seven floors); regression #2 tests the ordinance. Earlier versions applied only MR 55 and wrongly called it the stricter reading; the Codex review caught it. Verify with a Thai practitioner.
+1a. **The road setback (ord. art. 50 para. 2 / MR 55 art. 41) applies at any height to commercial and public buildings and to large buildings.** Offices are commercial buildings (ord. art. 5(106): trade or business services); hotels are public buildings (5(109) names them); large buildings are over 2,000 m2, or 15 m tall and over 1,000 m2 (5(101)). The ordinance's small-dwelling exemption is not in MR 55, so it is not applied. The envelope always applies the setback.
+1b. **Frontage means the plot touches the road.** MR 33 art. 2 ("ติดถนนสาธารณะ") and the zoning art. 16 road gates ("ตั้งอยู่ริมถนน") count a road chain only when its gap is at most 0.5 m (`PARAMS.frontageGapTol`, written call for map noise). The 12 m length test has a 1 mm float tolerance, so rotation cannot close the gate.
 2. **Clear space around the building (ord. art. 55) also applies on road edges.** The article says "ที่ว่างโดยรอบอาคาร" (space all round the building) without excluding roads, so 1 m (<= 15 m) or 2 m (> 15 m) also applies on road edges. On 10-20 m roads this beats W/10 (e.g. 2 m instead of 1.2 m on a 12 m road for a 22.5 m building).
 3. **Extra-large means 10,000 m2 or more.** MR 33 art. 1 says "ตั้งแต่ 10,000 ตารางเมตรขึ้นไป", in total or on any single floor. The low regime is therefore capped at 9,999 m2. High-rise means 23.00 m or more to the roof deck (พื้นดาดฟ้า), modelled as the top of the last floor.
 4. **The 2x rule is applied to every road**, not only the nearest (ord. art. 49 / MR 55 art. 44 say the nearest). Distances are taken to the road chain's segments with round ends, so points beyond the end of a frontage are still covered. The law says perpendicular, so this is stricter.
-5. **Wider-road relief (MR 55 arts. 45-46) is approximated.** The law's conditions are on the building: the corner case limits building length along the narrower road to <= 60 m, and the two-road case needs the roads <= 60 m apart and a building width along the wider road <= 60 m. The engine instead lifts the narrower road's 2x cut only inside a region within 60 m of the wider road (built 15 mm short of 60 m) and keeps its plain setback everywhere. It does not check the building-length condition. It can be switched off with `widerRoadRelief: false`. Ord. art. 49 para. 2 (within 100 m of an 80 m road) is not applied.
+5. **Wider-road relief (MR 55 arts. 45-46) is approximated.** The law's conditions are on the building: the corner case limits building length along the narrower road to <= 60 m, and the two-road case needs the roads <= 60 m apart and a building width along the wider road <= 60 m. The engine instead lifts the narrower road's 2x cut only inside a region within 60 m of the wider road (built 15 mm short of 60 m) and keeps its plain setback everywhere. It does not check the building-length condition. Relief applies only between different roads: two named chains are the same road when their names match; two unnamed chains meeting at a turn under 30° (`PARAMS.cornerTurnDeg`) are one road changing width. It can be switched off with `widerRoadRelief: false`. Ord. art. 49 para. 2 (within 100 m of an 80 m road) is not applied.
 6. **Zoning art. 16 bans: business area is taken as total GFA.** The text says "พื้นที่ประกอบการ" (business area); using the whole GFA is stricter. Hotel rooms are estimated as GFA / 50 m2 (written call, `PARAMS.hotelGfaPerRoom`).
 7. **Canal edges in the high regime get 6 m.** MR 33 art. 4 names only "other owners' land or public roads", so max(canal setback, 6 m) is a call (architecture F14).
 8. **Hotels count as non-dwelling** for open space (10% of plot, ord. art. 52(2) / MR 33 art. 6(2)). This is the plan's call; a hotel is arguably residential use, which would mean 30%.
@@ -59,3 +61,21 @@ Random "role soup" plots with 8-10 road chains of different widths take a few hu
 - Ord. art. 50 small-dwelling exemption not modelled (stricter).
 - One building per plot; MR 55 art. 48 spacing between buildings not used.
 - `zone: null` is a typed error (`invalid-zone`); the site layer decides what to do outside ย.9.
+
+## Adversarial review (Codex, 2026-11-19)
+
+Codex (read-only, extra-high reasoning) found 13 failures; 12 were reproduced here. Fixed, each with a test in `test/regressions.test.ts`:
+
+| # | Was | Now |
+|---|---|---|
+| 1 | short hotels and offices got no road setback | road setback at any height for commercial, public and large buildings |
+| 2 | floor 3 under 9 m kept 2 m from a neighbour | larger of MR 55 art. 50 and ord. art. 54, per floor |
+| 3 | one road changing width got corner relief | relief only between different roads (names, or a turn of 30° or more) |
+| 4 | widths under 1 m were enlarged to 1 m | refused (`invalid-edge`); widths over 100 m are clamped down (stricter) |
+| 5 | simplifying a 500+ corner plot moved the boundary past the 15 mm margin | setbacks are cut deeper by the measured shift; the checker measures the true outline; FAR uses the true area |
+| 6 | a road 50 m away opened the high-rise gate | frontage needs gap <= 0.5 m |
+| 7 | OSR could set the high regime's permitted GFA to 0 | footprint and GFA solved together (FAR 20 / OSR 10% case: 0 -> 14,212 m2) |
+| 8 | a 4° rotation closed an exact 12 m frontage | 1 mm tolerance on the frontage length |
+| 10 | checker verdict depended on shared arrays | relief cache keyed by geometry and requirement |
+
+Open: #9 (checker tests nesting by vertices only, so a hand-made upper floor can roof over a courtyard), #11 (equal frontages tie by ring order for the slab), #12 (antimeridian plots), #13 (many road edges take seconds; 80 edges ~4-9 s).

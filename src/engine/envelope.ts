@@ -5,7 +5,7 @@
 import type { Path64, Paths64 } from 'clipper2-ts';
 import { chainLabel } from './chains.js';
 import { and, area, bufferLine, dropSmall, minus, openSlivers, or, toPath, toPolygons } from './geom.js';
-import { PARAMS, RULES, TYPE_PARAMS, chainDistance, floorTop, type DistanceCtx } from './rules.js';
+import { PARAMS, RULES, TYPE_PARAMS, chainDistance, floorTop, isGateFrontage, touchesPlot, type DistanceCtx } from './rules.js';
 import type { BuildingType, Cap, Chain, Envelope, FloorPlate, Regime, Warning, XY, ZoneInfo } from './types.js';
 
 export interface Site {
@@ -22,6 +22,8 @@ export interface Site {
   type: BuildingType;
   zone: ZoneInfo;
   nearStation: boolean;
+  /** Extra cut width (m) on top of PARAMS.safety: how far simplification moved the boundary. */
+  extraMargin: number;
   bufCache: Map<string, Paths64>;
 }
 
@@ -40,7 +42,7 @@ function buf(site: Site, c: Chain, d: number): Paths64 {
   const key = `${c.id}:${dmm}`;
   let b = site.bufCache.get(key);
   if (!b) {
-    b = bufferLine(site.chainPaths[c.id]!, c.closed, dmm / 1000 + PARAMS.safety);
+    b = bufferLine(site.chainPaths[c.id]!, c.closed, dmm / 1000 + PARAMS.safety + site.extraMargin);
     site.bufCache.set(key, b);
   }
   return b;
@@ -76,7 +78,8 @@ export function runEnvelope(site: Site, o: RunOpts): EnvelopeRun {
   const plates: FloorPlate[] = [];
   const paths: Paths64[] = [];
   let prev: Paths64 | null = null;
-  let base: Paths64 | null = null; // plot minus every chain's base cut, computed once per run
+  let base: Paths64 | null = null; // plot minus every chain's floor-1 base cut, computed once per run
+  const base0: number[] = []; // each chain's floor-1 base distance
   let stopReason = `reached ${PARAMS.maxFloors} floors`;
   let droppedArea = 0;
   let sliverArea = 0;
@@ -89,11 +92,12 @@ export function runEnvelope(site: Site, o: RunOpts): EnvelopeRun {
         : `next floor would reach ${z1.toFixed(2)} m, above the ${o.zMax} m height band`;
       break;
     }
-    const ctx: DistanceCtx = { z: z1, buildingH: o.bandH, floors: o.bandFloors, high: o.regime === 'high' };
-    // Base distances are the same on every floor of a run; only 2x cuts grow with z.
-    // F_k = (plot - base cuts) - (2x cuts at z_k), computed fresh from the same cached
-    // geometry every floor (never from floor k-1, which would compound rounding), then
-    // clipped to floor k-1 so plates nest.
+    // the envelope applies the road setback to every building (art50: true, stricter)
+    const ctx: DistanceCtx = { level: k, z: z1, buildingH: o.bandH, art50: true, high: o.regime === 'high' };
+    // F_k = (plot - floor-1 base cuts) - (cuts that grew since floor 1: 2x fronts at z_k,
+    // and base distances that step up, e.g. 3 m from floor 3 under ord. art. 54),
+    // computed fresh from the same cached geometry every floor (never from floor k-1,
+    // which would compound rounding), then clipped to floor k-1 so plates nest.
     const baseCuts: Paths64 = [];
     const cuts: Paths64 = [];
     const dByChain: number[] = [];
@@ -102,7 +106,10 @@ export function runEnvelope(site: Site, o: RunOpts): EnvelopeRun {
     for (const c of site.chains) {
       const d = chainDistance(c, ctx);
       dByChain[c.id] = Math.max(d.base, d.twoX);
-      if (!base) baseCuts.push(...buf(site, c, d.base));
+      if (!base) {
+        base0[c.id] = d.base;
+        baseCuts.push(...buf(site, c, d.base));
+      } else if (d.base > base0[c.id]! + 1e-9) cuts.push(...buf(site, c, d.base));
       if (d.twoX > d.base) {
         const region = site.reliefRegion[c.id];
         if (region) {
@@ -166,8 +173,9 @@ function emptyReason(site: Site, ctx: DistanceCtx): string {
 // Caps and the permitted GFA of an envelope
 
 export interface RoadFacts {
-  /** Widest road chain with at least the gate frontage (m), or 0. */
+  /** Widest touching road chain with at least the gate frontage (m), or 0. */
   widestGateRoad: number;
+  /** Widest road chain that touches the plot (zoning art. 16 gates), or 0. */
   widestRoad: number;
 }
 
@@ -175,10 +183,10 @@ export function roadFacts(chains: Chain[]): RoadFacts {
   let widestGateRoad = 0;
   let widestRoad = 0;
   for (const c of chains) {
-    if (c.role !== 'road') continue;
+    if (!touchesPlot(c)) continue;
     const w = c.width ?? 0;
     widestRoad = Math.max(widestRoad, w);
-    if (c.length >= PARAMS.highGateFrontage) widestGateRoad = Math.max(widestGateRoad, w);
+    if (isGateFrontage(c)) widestGateRoad = Math.max(widestGateRoad, w);
   }
   return { widestGateRoad, widestRoad };
 }
@@ -223,6 +231,36 @@ export function maxFootprint(site: Site, targetGfa: number): { value: number; ru
   return cands.reduce((m, c) => (c.value < m.value ? c : m));
 }
 
+/**
+ * Open space couples footprint and GFA: zoning OSR needs open >= osr% x GFA, so more GFA
+ * allows a smaller footprint, which allows less GFA. Find the largest G <= upper with
+ * G <= sum_k min(plate_k, F(G)), where F(G) is the footprint allowed at G. The right side
+ * falls as G grows, so bisection finds it. Returns a cap only when open space binds.
+ */
+export function solveOpenSpace(site: Site, plates: FloorPlate[], upper: number): Cap | null {
+  const reach = (G: number) => {
+    const F = Math.max(0, maxFootprint(site, G).value);
+    return plates.reduce((s, p) => s + Math.min(p.area, F), 0);
+  };
+  if (reach(upper) >= upper - 1e-6) return null;
+  let lo = 0;
+  let hi = upper;
+  for (let i = 0; i < 60 && hi - lo > 1e-4; i++) {
+    const mid = (lo + hi) / 2;
+    if (reach(mid) >= mid) lo = mid;
+    else hi = mid;
+  }
+  // snap to the exact fixed point when the footprint limit is flat there (eg 7 x 1,400 m2)
+  const snap = reach(lo);
+  if (snap > lo && snap <= upper && reach(snap) >= snap - 1e-9) lo = snap;
+  const foot = maxFootprint(site, lo);
+  return {
+    id: foot.rule,
+    label: `open space holds the footprint to ${Math.max(0, foot.value).toFixed(1)} m2 at this GFA`,
+    value: lo,
+  };
+}
+
 export function finishEnvelope(site: Site, regime: Regime, run: EnvelopeRun, allowed: boolean, reason?: string): Envelope {
   const A = site.plotArea;
   const gfa = run.plates.reduce((s, p) => s + p.area, 0);
@@ -230,11 +268,9 @@ export function finishEnvelope(site: Site, regime: Regime, run: EnvelopeRun, all
   let permitted = 0;
   let limitedBy = reason ?? '';
   if (allowed && run.plates.length > 0) {
-    const fixedMin = Math.min(...caps.map((c) => c.value));
-    const foot = maxFootprint(site, Math.min(fixedMin, gfa));
-    const openCap = run.plates.reduce((s, p) => s + Math.min(p.area, Math.max(0, foot.value)), 0);
-    caps.push({ id: foot.rule, label: `plates clipped to the ${Math.max(0, foot.value).toFixed(1)} m2 footprint the open-space rules allow`, value: openCap });
     caps.push({ id: 'ENVELOPE', label: `envelope: ${run.stopReason}`, value: gfa });
+    const open = solveOpenSpace(site, run.plates, Math.min(...caps.map((c) => c.value)));
+    if (open) caps.push(open);
     const best = caps.reduce((m, c) => (c.value < m.value ? c : m));
     permitted = best.value;
     limitedBy = best.id === 'ENVELOPE' ? best.label : `${RULES[best.id]!.article} ${RULES[best.id]!.source.split(' (')[0]}: ${best.label}`;

@@ -45,10 +45,44 @@ const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFin
 
 export interface CleanPlot {
   frame: Frame;
+  /** Ring the geometry is built from (simplified when the plot had > 500 corners). */
   ring: XY[];
   edges: EdgeInfo[];
+  /** Area of the true (unsimplified) plot. */
   area: number;
+  /** The true outline when simplification changed it (the checker measures against this), else null. */
+  original: { ring: XY[]; edges: EdgeInfo[] } | null;
+  /** Largest distance between the true outline and the simplified one (0 when not simplified). */
+  simplifyDev: number;
   warnings: Warning[];
+}
+
+/** Reverse a ring and remap its edges so edge j still runs ring[j] -> ring[j+1]. */
+function reverseRing(ring: XY[], edges: EdgeInfo[]): { ring: XY[]; edges: EdgeInfo[] } {
+  const n = ring.length;
+  const r2 = ring.slice().reverse();
+  return { ring: r2, edges: r2.map((_, j) => edges[(n - 2 - j + n) % n]!) };
+}
+
+/** Largest distance from any vertex of one closed ring to the other ring, both ways. */
+function ringDeviation(a: XY[], b: XY[]): number {
+  const dist = (p: XY, r: XY[]) => {
+    let m = Infinity;
+    for (let i = 0; i < r.length; i++) m = Math.min(m, lineSegDist(p, r[i]!, r[(i + 1) % r.length]!));
+    return m;
+  };
+  let d = 0;
+  for (const p of a) d = Math.max(d, dist(p, b));
+  for (const p of b) d = Math.max(d, dist(p, a));
+  return d;
+}
+
+function lineSegDist(p: XY, a: XY, b: XY): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const L2 = dx * dx + dy * dy;
+  const t = L2 === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
 }
 
 /** Distance from p to the line through a and b (or to a when a == b). */
@@ -170,10 +204,14 @@ export function cleanPlot(rawRing: unknown, rawEdges: unknown, units: 'lonlat' |
         return err('invalid-edge', `edge ${i} is a ${e.role} but has no valid width`, i);
       }
       let w = e.width;
-      if (w < LIMITS.minWidth || w > LIMITS.maxWidth) {
-        const c = Math.min(LIMITS.maxWidth, Math.max(LIMITS.minWidth, w));
-        warnings.push({ code: 'width-clamped', message: `edge ${i}: width ${w} m clamped to ${c} m` });
-        w = c;
+      // a narrower road needs a larger setback, so a tiny width is refused, never enlarged
+      if (w < LIMITS.minWidth) {
+        return err('invalid-edge', `edge ${i}: a ${e.role} narrower than ${LIMITS.minWidth} m is not supported (got ${w} m)`, i);
+      }
+      // clamping a very wide road down only makes the 2x rule stricter
+      if (w > LIMITS.maxWidth) {
+        warnings.push({ code: 'width-clamped', message: `edge ${i}: width ${w} m treated as ${LIMITS.maxWidth} m (stricter)` });
+        w = LIMITS.maxWidth;
       }
       out.width = w;
       let g = 0;
@@ -220,29 +258,42 @@ export function cleanPlot(rawRing: unknown, rawEdges: unknown, units: 'lonlat' |
   if (ring.length < 3) return err('too-few-points', 'a plot needs at least 3 distinct points');
 
   dropCollinear(ring, edges, 0.001);
+  let original: { ring: XY[]; edges: EdgeInfo[] } | null = null;
+  let simplifyDev = 0;
   if (ring.length > LIMITS.maxVertices) {
+    // the true outline must be valid on its own; the simplified one only drives the geometry
+    const badTrue = findSelfIntersection(ring);
+    if (badTrue >= 0) return err('self-intersection', `plot outline crosses itself near side ${badTrue}`, badTrue);
+    original = { ring: ring.slice(), edges: edges.slice() };
     dropCollinear(ring, edges, LIMITS.simplifyTol);
     if (ring.length > LIMITS.maxVertices) {
       return err('too-many-vertices', `plot has ${ring.length} corners after simplifying at ${LIMITS.simplifyTol} m; the limit is ${LIMITS.maxVertices}`);
     }
-    warnings.push({ code: 'simplified', message: `plot outline simplified at ${LIMITS.simplifyTol} m` });
+    simplifyDev = ringDeviation(original.ring, ring);
+    warnings.push({
+      code: 'simplified',
+      message: `plot outline simplified at ${LIMITS.simplifyTol} m (boundary moved up to ${(simplifyDev * 1000).toFixed(0)} mm; setbacks are cut that much deeper)`,
+    });
   }
   if (ring.length < 3) return err('too-few-points', 'a plot needs at least 3 distinct points');
 
   let area = signedArea(ring);
   if (Math.abs(area) < LIMITS.minArea) return err('zero-area', 'plot has (almost) no area');
   if (area < 0) {
-    const n = ring.length;
-    const r2 = ring.slice().reverse();
-    const e2 = r2.map((_, j) => edges[(n - 2 - j + n) % n]!);
-    ring.splice(0, n, ...r2);
-    edges.splice(0, n, ...e2);
+    const r = reverseRing(ring, edges);
+    ring.splice(0, ring.length, ...r.ring);
+    edges.splice(0, edges.length, ...r.edges);
     area = -area;
+  }
+  if (original) {
+    const a0 = signedArea(original.ring);
+    if (a0 < 0) original = reverseRing(original.ring, original.edges);
+    area = Math.abs(a0); // FAR and open space use the true plot area
   }
   const bad = findSelfIntersection(ring);
   if (bad >= 0) return err('self-intersection', `plot outline crosses itself near side ${bad}`, bad);
   if (area > LIMITS.maxArea) {
     return err('too-large', `plot is ${Math.round(area)} m2; the limit is ${LIMITS.maxArea} m2`);
   }
-  return { frame, ring, edges, area, warnings };
+  return { frame, ring, edges, area, original, simplifyDev, warnings };
 }

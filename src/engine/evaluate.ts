@@ -12,21 +12,49 @@ import {
   PARAMS, RULES, RULE_ORDER, TYPE_PARAMS, canalSetback, clearAround, privateSetback, roadSetback,
 } from './rules.js';
 import type {
-  AppliedRule, BuildingType, Chain, Design, EngineError, EngineInput, EngineOutput, Envelope, Regime, Warning,
+  AppliedRule, BuildingType, Chain, Design, EngineError, EngineInput, EngineOutput, Envelope, Regime, Warning, XY,
 } from './types.js';
 
 const TYPES: readonly BuildingType[] = ['condo', 'apartment', 'office', 'hotel'];
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const fail = (code: EngineError['code'], message: string): EngineError => ({ ok: false, code, message });
 
-/** Pairs each narrower road chain with wider road chains within 60 m (corner or two roads). */
-function reliefPartners(chains: Chain[], enabled: boolean): number[][] {
+const samePt = (a: XY, b: XY) => Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
+
+/**
+ * Turn in degrees where chain a ends and chain b starts (they share that vertex), or null
+ * when they do not meet end-to-start.
+ */
+function turnAt(a: Chain, b: Chain): number | null {
+  const ap = a.points;
+  const bp = b.points;
+  if (a.closed || b.closed || !samePt(ap[ap.length - 1]!, bp[0]!)) return null;
+  const p = ap[ap.length - 2]!;
+  const q = ap[ap.length - 1]!;
+  const r = bp[1]!;
+  const t = Math.atan2((q[0] - p[0]) * (r[1] - q[1]) - (q[1] - p[1]) * (r[0] - q[0]), (q[0] - p[0]) * (r[0] - q[0]) + (q[1] - p[1]) * (r[1] - q[1]));
+  return Math.abs((t * 180) / Math.PI);
+}
+
+/**
+ * MR 55 arts. 45-46 relief pairs: each narrower road chain with wider road chains that are
+ * a different road at a corner (art. 46) or a second road within 60 m (art. 45). When both
+ * chains are named, the names decide whether they are the same road; unnamed chains that meet
+ * with a turn under PARAMS.cornerTurnDeg are one road changing width. No relief within a road.
+ */
+export function reliefPartners(chains: Chain[], enabled: boolean): number[][] {
   const out: number[][] = chains.map(() => []);
   if (!enabled) return out;
+  const sameRoad = (a: Chain, b: Chain) => {
+    if (a.name && b.name) return a.name === b.name;
+    const t = turnAt(a, b) ?? turnAt(b, a);
+    return t !== null && t < PARAMS.cornerTurnDeg;
+  };
   for (const n of chains) {
     if (n.role !== 'road') continue;
     for (const w of chains) {
       if (w.role !== 'road' || w.id === n.id || (w.width ?? 0) <= (n.width ?? 0)) continue;
+      if (sameRoad(n, w)) continue;
       if (polylineDist(n.points, w.points) <= PARAMS.reliefReach) out[n.id]!.push(w.id);
     }
   }
@@ -113,8 +141,9 @@ function run(input: EngineInput): EngineOutput {
     const key = ps.join(',');
     let region = regionByKey.get(key);
     if (!region) {
-      // built PARAMS.safety short of 60 m, so rounding can never stretch the relief past 60 m
-      region = and(or(ps.map((w) => bufferLine(chainPaths[w]!, chains[w]!.closed, PARAMS.reliefReach - PARAMS.safety))), plotPath);
+      // built short of 60 m by the safety margin and any simplification shift, so neither
+      // rounding nor simplification can stretch the relief past 60 m of the true road
+      region = and(or(ps.map((w) => bufferLine(chainPaths[w]!, chains[w]!.closed, PARAMS.reliefReach - PARAMS.safety - plot.simplifyDev))), plotPath);
       regionByKey.set(key, region);
     }
     return region;
@@ -132,6 +161,8 @@ function run(input: EngineInput): EngineOutput {
     type: input.type,
     zone: { code: input.zone!.code, far: input.zone!.far, osrPct: input.zone!.osrPct },
     nearStation: input.nearStation,
+    // simplification moved the boundary by up to this much: every setback is cut that much deeper
+    extraMargin: plot.simplifyDev,
     bufCache: new Map(),
   };
   if (!chains.some((c) => c.role === 'road')) {
@@ -144,9 +175,16 @@ function run(input: EngineInput): EngineOutput {
   const chosen: Regime = high.env.allowed && high.env.permittedGfa > low.env.permittedGfa + 1e-6 ? 'high' : 'low';
   const pick = chosen === 'high' ? high : low;
 
-  const checkSite: CheckSite = {
-    ring: plot.ring, chains, reliefPartners: partners, zone: site.zone, type: site.type, nearStation: site.nearStation,
-  };
+  // the checker measures against the true outline, even when the geometry used a simplified one
+  const checkSite: CheckSite = plot.original
+    ? (() => {
+        const trueChains = buildChains(plot.original.ring, plot.original.edges);
+        return {
+          ring: plot.original.ring, chains: trueChains, reliefPartners: reliefPartners(trueChains, input.widerRoadRelief !== false),
+          zone: site.zone, type: site.type, nearStation: site.nearStation,
+        };
+      })()
+    : { ring: plot.ring, chains, reliefPartners: partners, zone: site.zone, type: site.type, nearStation: site.nearStation };
   const designs: Design[] = buildDesigns(site, chosen, pick.paths, pick.env.plates, pick.env.caps).map((d) => {
     const { checks } = checkDesign(checkSite, d.plates);
     return { ...d, checks, passes: checks.every((c) => c.status !== 'fail') };

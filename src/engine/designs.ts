@@ -197,8 +197,9 @@ function draft(
 
 export function buildDesigns(site: Site, regime: Regime, envPaths: Paths64[], envPlates: FloorPlate[], caps: Cap[]): DesignDraft[] {
   if (envPlates.length === 0) return [];
-  const fixed = caps.filter((c) => c.id !== 'ORD52-OPEN' && c.id !== 'MR55-33' && c.id !== 'Z16-OSR');
-  const target = fixed.reduce((m, c) => (c.value < m.value ? c : m));
+  // target = the envelope's permitted GFA (the open-space cap, when present, is already the
+  // solved GFA at which footprint and OSR agree); the footprint limit follows from it
+  const target = caps.reduce((m, c) => (c.value < m.value ? c : m));
   const foot = maxFootprint(site, target.value);
   const footLimit = Math.max(0, foot.value);
   const tp = TYPE_PARAMS[site.type];
