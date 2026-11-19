@@ -16,7 +16,7 @@ export function metresPerDegree(latDeg: number): { lon: number; lat: number } {
 }
 
 export function toLocal(frame: Frame, lon: number, lat: number): XY {
-  return [(lon - frame.lon0) * frame.mPerDegLon, (lat - frame.lat0) * frame.mPerDegLat];
+  return [(lon - frame.lon0) * frame.mPerDegLon + 0, (lat - frame.lat0) * frame.mPerDegLat + 0];
 }
 
 /** Inverse of toLocal; the scene layer uses it to place plates on the map. */
@@ -187,21 +187,22 @@ export function cleanPlot(rawRing: unknown, rawEdges: unknown, units: 'lonlat' |
     edges.push(out);
   }
 
-  // frame
+  // frame: origin at the vertex mean (metre input is translated too, so local
+  // coordinates stay small and integer-millimetre geometry stays exact)
+  let sx = 0;
+  let sy = 0;
+  for (const p of pts) {
+    sx += p[0];
+    sy += p[1];
+  }
+  const lon0 = sx / pts.length;
+  const lat0 = sy / pts.length;
   let frame: Frame;
   if (units === 'lonlat') {
-    let sx = 0;
-    let sy = 0;
-    for (const p of pts) {
-      sx += p[0];
-      sy += p[1];
-    }
-    const lon0 = sx / pts.length;
-    const lat0 = sy / pts.length;
     const m = metresPerDegree(lat0);
     frame = { lon0, lat0, mPerDegLon: m.lon, mPerDegLat: m.lat, units };
   } else {
-    frame = { lon0: 0, lat0: 0, mPerDegLon: 1, mPerDegLat: 1, units };
+    frame = { lon0, lat0, mPerDegLon: 1, mPerDegLat: 1, units };
   }
   const ring: XY[] = pts.map((p) => toLocal(frame, p[0], p[1]));
 

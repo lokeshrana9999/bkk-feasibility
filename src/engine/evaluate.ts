@@ -5,7 +5,8 @@ import { checkDesign, type CheckSite } from './checker.js';
 import { buildDesigns } from './designs.js';
 import { buildHigh, buildLow, highGate, roadFacts, type Site } from './envelope.js';
 import { cleanPlot } from './frame.js';
-import { bufferLine, or, toPath } from './geom.js';
+import type { Paths64 } from 'clipper2-ts';
+import { and, bufferLine, or, toPath } from './geom.js';
 import { polylineDist } from './measure.js';
 import {
   PARAMS, RULES, RULE_ORDER, TYPE_PARAMS, canalSetback, clearAround, privateSetback, roadSetback,
@@ -102,13 +103,26 @@ function run(input: EngineInput): EngineOutput {
   const chains = buildChains(plot.ring, plot.edges);
   const partners = reliefPartners(chains, input.widerRoadRelief !== false);
   const chainPaths = chains.map((c) => toPath(c.points));
-  const reliefRegion = chains.map((c) =>
-    partners[c.id]!.length ? or(partners[c.id]!.map((w) => bufferLine(chainPaths[w]!, chains[w]!.closed, PARAMS.reliefReach))) : null,
-  );
+  // only the part of each relief region inside the plot matters (cuts are subtracted from the plot)
+  const plotPath = [toPath(plot.ring)];
+  // chains with the same partners share one region object (the envelope groups cuts by it)
+  const regionByKey = new Map<string, Paths64>();
+  const reliefRegion = chains.map((c) => {
+    const ps = partners[c.id]!;
+    if (ps.length === 0) return null;
+    const key = ps.join(',');
+    let region = regionByKey.get(key);
+    if (!region) {
+      // built PARAMS.safety short of 60 m, so rounding can never stretch the relief past 60 m
+      region = and(or(ps.map((w) => bufferLine(chainPaths[w]!, chains[w]!.closed, PARAMS.reliefReach - PARAMS.safety))), plotPath);
+      regionByKey.set(key, region);
+    }
+    return region;
+  });
   const tp = TYPE_PARAMS[input.type];
   const site: Site = {
     ring: plot.ring,
-    plot: [toPath(plot.ring)],
+    plot: plotPath,
     plotArea: plot.area,
     chains,
     chainPaths,

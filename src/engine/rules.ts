@@ -174,8 +174,12 @@ export const PARAMS = Object.freeze({
   maxFloors: 60,
   minPlateArea: 40, // m2, smaller parts are dropped
   slivers: 1.5, // m, opening width
-  arcTol: 0.005, // m, round-join chord tolerance (the checker's tolerance builds on it)
-  checkTol: 0.006, // m
+  arcTol: 0.01, // m, round-join chord tolerance: chords sit up to this far inside the true arc
+  // Every setback buffer is cut this much wider than the law, so arc chords (10 mm) and
+  // integer-millimetre rounding (measured up to ~2.6 mm; budget 5 mm) can never bring a plate closer than the legal distance.
+  safety: 0.015, // m
+  checkTol: 0.001, // m, float noise only: the checker passes no distance that measures short
+  geomTol: 0.002, // m, containment (inside plot / inside the floor below): boolean output can move a vertex ~1-2 mm
   parapet: 0, // m
 });
 

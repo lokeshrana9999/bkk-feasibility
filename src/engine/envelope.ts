@@ -33,12 +33,14 @@ export interface EnvelopeRun {
   sliverArea: number;
 }
 
+/** Buffer of a chain at legal distance d, cut PARAMS.safety wider (see rules.ts). */
 function buf(site: Site, c: Chain, d: number): Paths64 {
+  if (d <= 0) return [];
   const dmm = Math.round(d * 1000);
   const key = `${c.id}:${dmm}`;
   let b = site.bufCache.get(key);
   if (!b) {
-    b = bufferLine(site.chainPaths[c.id]!, c.closed, dmm / 1000);
+    b = bufferLine(site.chainPaths[c.id]!, c.closed, dmm / 1000 + PARAMS.safety);
     site.bufCache.set(key, b);
   }
   return b;
@@ -74,6 +76,7 @@ export function runEnvelope(site: Site, o: RunOpts): EnvelopeRun {
   const plates: FloorPlate[] = [];
   const paths: Paths64[] = [];
   let prev: Paths64 | null = null;
+  let base: Paths64 | null = null; // plot minus every chain's base cut, computed once per run
   let stopReason = `reached ${PARAMS.maxFloors} floors`;
   let droppedArea = 0;
   let sliverArea = 0;
@@ -87,18 +90,45 @@ export function runEnvelope(site: Site, o: RunOpts): EnvelopeRun {
       break;
     }
     const ctx: DistanceCtx = { z: z1, buildingH: o.bandH, floors: o.bandFloors, high: o.regime === 'high' };
+    // Base distances are the same on every floor of a run; only 2x cuts grow with z.
+    // F_k = (plot - base cuts) - (2x cuts at z_k), computed fresh from the same cached
+    // geometry every floor (never from floor k-1, which would compound rounding), then
+    // clipped to floor k-1 so plates nest.
+    const baseCuts: Paths64 = [];
     const cuts: Paths64 = [];
     const dByChain: number[] = [];
+    // relief chains sharing a relief region are cut together: (union of their 2x buffers) - region
+    const reliefGroups = new Map<Paths64, Paths64>();
     for (const c of site.chains) {
-      const { base, twoX } = chainDistance(c, ctx);
-      dByChain[c.id] = Math.max(base, twoX);
-      cuts.push(...chainCut(site, c, base, twoX));
+      const d = chainDistance(c, ctx);
+      dByChain[c.id] = Math.max(d.base, d.twoX);
+      if (!base) baseCuts.push(...buf(site, c, d.base));
+      if (d.twoX > d.base) {
+        const region = site.reliefRegion[c.id];
+        if (region) {
+          const g = reliefGroups.get(region) ?? [];
+          g.push(...buf(site, c, d.twoX));
+          reliefGroups.set(region, g);
+        } else cuts.push(...buf(site, c, d.twoX));
+      }
     }
-    let F = minus(site.plot, cuts);
+    if (!base) base = minus(site.plot, baseCuts);
+    for (const [region, g] of reliefGroups) cuts.push(...minus(g, region));
+    if (prev && cuts.length === 0) {
+      // nothing grew: same plate as the floor below (shared geometry)
+      const below = plates[plates.length - 1]!;
+      plates.push({ level: k, z0, z1, polygons: below.polygons, area: below.area, dByChain });
+      paths.push(prev);
+      continue;
+    }
+    let F = minus(base, cuts);
     if (prev) F = and(F, prev);
     const before = area(F);
-    const opened = openSlivers(F, PARAMS.slivers);
-    const kept = dropSmall(opened, PARAMS.minPlateArea);
+    // Full morphological opening on the run's first floor (plot-shape slivers, acute
+    // corners). Above it only 2x fronts move, so parts are dropped when their mean
+    // thickness falls under the sliver width (the cheap test keeps 60 floors fast).
+    const opened = prev ? F : openSlivers(F, PARAMS.slivers);
+    const kept = dropSmall(opened, PARAMS.minPlateArea, prev ? PARAMS.slivers : 0);
     const a = area(kept.paths);
     if (a > 0) {
       droppedArea += kept.dropped;
@@ -243,6 +273,7 @@ export interface RegimeBuild {
 export function buildLow(site: Site): RegimeBuild {
   const bands = [8, 9, 15, PARAMS.highRiseHeight];
   let best: { env: Envelope; run: EnvelopeRun } | null = null;
+  let lastFloors = -1;
   for (const U of bands) {
     const strict = U === PARAMS.highRiseHeight;
     let floors = 0;
@@ -251,10 +282,13 @@ export function buildLow(site: Site): RegimeBuild {
       if (strict ? z >= U : z > U) break;
       floors++;
     }
-    if (floors === 0) continue;
+    // the band's building is at most `floors` storeys, so its height is that floor's top;
+    // a band fitting the same number of floors is the same building: skip it
+    if (floors === 0 || floors === lastFloors) continue;
+    lastFloors = floors;
     const run = runEnvelope(site, {
       regime: 'low',
-      bandH: strict ? floorTop(floors, site.floorH) : U,
+      bandH: floorTop(floors, site.floorH),
       bandFloors: floors,
       zStrict: strict ? U : Infinity,
       zMax: strict ? Infinity : U,

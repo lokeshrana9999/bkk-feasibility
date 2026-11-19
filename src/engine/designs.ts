@@ -21,20 +21,49 @@ function clean(p: Paths64): Paths64 {
   return dropSmall(openSlivers(p, PARAMS.slivers), PARAMS.minPlateArea).paths;
 }
 
-/** Smallest extra inset that brings the area to <= limit (30 bisection steps, ~mm). */
-function shrinkTo(p: Paths64, limit: number, base = 0): { paths: Paths64; t: number } {
-  if (area(p) <= limit) return { paths: p, t: base };
+/** Drops parts under the minimum plate size (no opening: inputs are already clean plates). */
+function keep(p: Paths64): Paths64 {
+  return dropSmall(p, PARAMS.minPlateArea).paths;
+}
+
+/**
+ * Extra inset t that brings the area to <= limit, within areaTol m2 below it (or t within
+ * 1 mm). Area falls smoothly as the inset grows, so a bracketed secant search (Illinois
+ * variant of regula falsi) converges in a handful of steps.
+ */
+function shrinkTo(p: Paths64, limit: number, base = 0, areaTol = 0.5): { paths: Paths64; t: number } {
+  const a0 = area(p);
+  if (a0 <= limit) return { paths: p, t: base };
   let lo = 0;
+  let flo = a0 - limit; // > 0
   let hi = 1;
-  while (area(clean(inset(p, hi))) > limit && hi < 512) hi *= 2;
-  let best = clean(inset(p, hi));
-  for (let i = 0; i < 30; i++) {
-    const mid = (lo + hi) / 2;
-    const cand = clean(inset(p, mid));
-    if (area(cand) <= limit) {
-      hi = mid;
+  let best = keep(inset(p, hi));
+  let fhi = area(best) - limit;
+  while (fhi > 0 && hi < 512) {
+    lo = hi;
+    flo = fhi;
+    hi *= 2;
+    best = keep(inset(p, hi));
+    fhi = area(best) - limit;
+  }
+  let side = 0;
+  for (let i = 0; i < 40 && fhi < -areaTol && hi - lo > 0.001; i++) {
+    let t = hi - (fhi * (hi - lo)) / (fhi - flo);
+    if (!(t > lo && t < hi)) t = (lo + hi) / 2;
+    const cand = keep(inset(p, t));
+    const f = area(cand) - limit;
+    if (f <= 0) {
+      hi = t;
+      fhi = f;
       best = cand;
-    } else lo = mid;
+      if (side === -1) flo /= 2;
+      side = -1;
+    } else {
+      lo = t;
+      flo = f;
+      if (side === 1) fhi /= 2;
+      side = 1;
+    }
   }
   return { paths: best, t: base + hi };
 }
@@ -42,7 +71,10 @@ function shrinkTo(p: Paths64, limit: number, base = 0): { paths: Paths64; t: num
 function stack(
   envPlates: FloorPlate[],
   target: number,
-  floorPaths: (k: number) => Paths64,
+  /** Floor k's geometry, already clipped to the floor below (prev) when there is one. */
+  floorPaths: (k: number, prev: Paths64 | null) => Paths64,
+  /** True when floor k is built from the same envelope plate and transform as floor k-1. */
+  sameAsBelow: (k: number) => boolean,
 ): StackResult {
   const plates: FloorPlate[] = [];
   let gfa = 0;
@@ -50,10 +82,17 @@ function stack(
   let stop = 'envelope has no more floors';
   for (let k = 0; k < envPlates.length; k++) {
     const env = envPlates[k]!;
-    let p = floorPaths(k);
-    if (prev) p = and(p, prev);
-    p = clean(p);
-    let a = area(p);
+    const below = plates[plates.length - 1];
+    let p: Paths64;
+    let a: number;
+    if (prev && below && sameAsBelow(k)) {
+      p = prev;
+      a = below.area;
+    } else {
+      p = floorPaths(k, prev);
+      p = k === 0 ? clean(p) : keep(p);
+      a = area(p);
+    }
     if (a <= 0) {
       stop = `floor ${env.level} has no room left inside the envelope`;
       break;
@@ -62,13 +101,14 @@ function stack(
     if (a > remaining) {
       if (remaining < PARAMS.minPlateArea) return { plates, gfa, hitTarget: true, stop: 'target reached' };
       p = shrinkTo(p, remaining).paths;
+      if (prev) p = keep(and(p, prev)); // re-clip: the inset rounds independently of the floor below
       a = area(p);
       if (a <= 0) return { plates, gfa, hitTarget: true, stop: 'target reached' };
       plates.push({ ...env, polygons: toPolygons(p), area: a });
       gfa += a;
       return { plates, gfa, hitTarget: true, stop: 'target reached' };
     }
-    plates.push({ ...env, polygons: toPolygons(p), area: a });
+    plates.push({ ...env, polygons: p === prev && below ? below.polygons : toPolygons(p), area: a });
     gfa += a;
     prev = p;
   }
@@ -167,19 +207,25 @@ export function buildDesigns(site: Site, regime: Regime, envPaths: Paths64[], en
 
   // 1. Tower on podium
   {
-    const g = shrinkTo(F(0), footLimit);
+    const g = shrinkTo(F(0), footLimit, 0, 1);
     const a = g.t;
     const P = Math.min(tp.podiumFloors, envPlates.length);
     let t = a;
     if (P < envPlates.length) {
-      const towerBase = a > 0 ? clean(inset(F(P), a)) : F(P);
-      t = shrinkTo(towerBase, tp.towerPlateMax, a).t;
+      const towerBase = a > 0 ? keep(inset(F(P), a)) : F(P);
+      t = shrinkTo(towerBase, tp.towerPlateMax, a, 5).t;
     }
-    const r = stack(envPlates, target.value, (k) => {
-      const d = k < P ? a : t;
-      return d > 0 ? inset(F(k), d) : F(k);
-    });
-    out.push(draft('tower-podium', 'Tower on podium', regime, site, target, r, a > 0 ? foot.rule : null));
+    const r = stack(
+      envPlates,
+      target.value,
+      (k, prev) => {
+        const d = k < P ? a : t;
+        const g = d > 0 ? inset(F(k), d) : F(k);
+        return prev ? and(g, prev) : g;
+      },
+      (k) => F(k) === F(k - 1) && (k < P) === (k - 1 < P),
+    );
+    if (r.plates.length > 0) out.push(draft('tower-podium', 'Tower on podium', regime, site, target, r, a > 0 ? foot.rule : null));
   }
 
   // 2. Slab parallel to the main frontage
@@ -187,13 +233,13 @@ export function buildDesigns(site: Site, regime: Regime, envPaths: Paths64[], en
     let depth = tp.slabDepth;
     const fit = (d: number) => {
       const band = bandPath(site, F(0), d);
-      return band ? clean(and(F(0), [band])) : [];
+      return band ? keep(and(F(0), [band])) : [];
     };
     let footCut: string | null = null;
     if (area(fit(depth)) > footLimit) {
       let lo = 0;
       let hi = depth;
-      for (let i = 0; i < 30; i++) {
+      while (hi - lo > 0.005) {
         const mid = (lo + hi) / 2;
         if (area(fit(mid)) <= footLimit) lo = mid;
         else hi = mid;
@@ -203,8 +249,9 @@ export function buildDesigns(site: Site, regime: Regime, envPaths: Paths64[], en
     }
     const band = bandPath(site, F(0), depth);
     if (band && depth >= 6) {
-      const r = stack(envPlates, target.value, (k) => and(F(k), [band]));
-      out.push(draft('slab', 'Slab along the frontage', regime, site, target, r, footCut));
+      // above the ground floor, the floor below already carries the band: one intersection per floor
+      const r = stack(envPlates, target.value, (k, prev) => and(F(k), prev ?? [band]), (k) => F(k) === F(k - 1));
+      if (r.plates.length > 0) out.push(draft('slab', 'Slab along the frontage', regime, site, target, r, footCut));
     }
   }
 
@@ -215,8 +262,8 @@ export function buildDesigns(site: Site, regime: Regime, envPaths: Paths64[], en
     const MIN_COURT = 100;
     const MIN_WING = 6;
     const ground = (w: number) => {
-      const hole = clean(inset(F(0), w));
-      return { hole, plate: clean(minus(F(0), hole)) };
+      const hole = keep(inset(F(0), w));
+      return { hole, plate: minus(F(0), hole) };
     };
     const ok = (w: number) => {
       const g = ground(w);
@@ -230,7 +277,7 @@ export function buildDesigns(site: Site, regime: Regime, envPaths: Paths64[], en
       // both constraints get easier as the wing gets thinner: bisect the deepest wing that works
       let lo = MIN_WING;
       let hi = wing;
-      for (let i = 0; i < 30; i++) {
+      while (hi - lo > 0.05) {
         const mid = (lo + hi) / 2;
         if (ok(mid)) lo = mid;
         else hi = mid;
@@ -241,8 +288,9 @@ export function buildDesigns(site: Site, regime: Regime, envPaths: Paths64[], en
     }
     if (g.hole.length > 0 && g.plate.length > 0) {
       const hole = g.hole;
-      const r = stack(envPlates, target.value, (k) => minus(F(k), hole));
-      out.push(draft('courtyard', 'Courtyard block', regime, site, target, r, footCut));
+      // above the ground floor, the floor below already has the courtyard cut out
+      const r = stack(envPlates, target.value, (k, prev) => (prev ? and(F(k), prev) : minus(F(k), hole)), (k) => F(k) === F(k - 1));
+      if (r.plates.length > 0) out.push(draft('courtyard', 'Courtyard block', regime, site, target, r, footCut));
     }
   }
   return out;

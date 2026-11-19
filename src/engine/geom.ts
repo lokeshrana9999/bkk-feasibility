@@ -113,21 +113,37 @@ function groupPaths(paths: Paths64): Group[] {
   return outers;
 }
 
-/** Drop polygons whose net area is below minArea m2. Returns kept paths and dropped area. */
-export function dropSmall(paths: Paths64, minArea: number): { paths: Paths64; dropped: number } {
+function perimeter(p: Path64): number {
+  let s = 0;
+  for (let i = 0, n = p.length; i < n; i++) {
+    const a = p[i]!;
+    const b = p[(i + 1) % n]!;
+    s += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  return s;
+}
+
+/**
+ * Drop polygons whose net area is below minArea m2, or (when minThickness > 0) whose
+ * mean thickness 2 x area / perimeter is below minThickness m (a strip w wide scores ~w).
+ * Returns kept paths and dropped area.
+ */
+export function dropSmall(paths: Paths64, minArea: number, minThickness = 0): { paths: Paths64; dropped: number } {
   const groups = groupPaths(paths);
   const out: Paths64 = [];
   let dropped = 0;
   for (const g of groups) {
     const a = g.net / (MM * MM);
-    if (a < minArea) dropped += a;
+    const thin = minThickness > 0 && (2 * g.net) / [g.outer, ...g.holes].reduce((s, p) => s + perimeter(p), 0) / MM < minThickness;
+    if (a < minArea || thin) dropped += a;
     else out.push(g.outer, ...g.holes);
   }
   return { paths: out, dropped };
 }
 
 export function toPolygons(paths: Paths64): Polygon[] {
-  const conv = (p: Path64): XY[] => p.map((q) => [q.x / MM, q.y / MM] as XY);
+  // "+ 0" turns -0 into 0, so results survive a JSON round trip unchanged
+  const conv = (p: Path64): XY[] => p.map((q) => [q.x / MM + 0, q.y / MM + 0] as XY);
   return groupPaths(paths)
     .sort((g, h) => h.net - g.net)
     .map((g) => [conv(g.outer), ...g.holes.map(conv)]);

@@ -54,26 +54,56 @@ export function measure(site: CheckSite, plates: FloorPlate[]): Measured {
   return { gfa, footprint, openSpace: plotArea - footprint, plotArea, height, floors: plates.length, high };
 }
 
-/** Minimum distance from any plate boundary to a chain, and the worst 2x margin per floor. */
-function chainMeasures(site: CheckSite, c: Chain, plates: FloorPlate[]) {
-  const segsByLevel = plates.map((p) => polygonSegments(p.polygons));
+/**
+ * Minimum distance from any plate boundary to a chain, and the worst 2x margin per floor.
+ * Floors that share geometry with the floor below (same polygons array) reuse its distances.
+ */
+function chainMeasures(site: CheckSite, c: Chain, plates: FloorPlate[], segCache: Map<unknown, [XY, XY][]>) {
+  const segsOf = (p: FloorPlate) => {
+    let s = segCache.get(p.polygons);
+    if (!s) {
+      s = polygonSegments(p.polygons);
+      segCache.set(p.polygons, s);
+    }
+    return s;
+  };
+  const distCache = new Map<unknown, number>();
+  const plainDist = (p: FloorPlate) => {
+    let d = distCache.get(p.polygons);
+    if (d === undefined) {
+      d = segmentsToPolylineDist(segsOf(p), c.points);
+      distCache.set(p.polygons, d);
+    }
+    return d;
+  };
   let minDist = Infinity;
-  for (const segs of segsByLevel) minDist = Math.min(minDist, segmentsToPolylineDist(segs, c.points));
+  for (const p of plates) minDist = Math.min(minDist, plainDist(p));
   let worst2x = { margin: Infinity, level: 0, dist: Infinity, req: 0 };
   if (c.role === 'road') {
     const partners = site.reliefPartners[c.id] ?? [];
-    plates.forEach((p, i) => {
+    const reliefCache = new Map<unknown, number>();
+    plates.forEach((p) => {
       const req = twoXDistance(p.z1, c.width ?? 0, c.gap);
-      const segs = segsByLevel[i]!;
+      const segs = segsOf(p);
       let dist: number;
-      if (partners.length === 0) dist = segmentsToPolylineDist(segs, c.points);
+      if (partners.length === 0) dist = plainDist(p);
+      else if (reliefCache.has(p.polygons)) dist = reliefCache.get(p.polygons)!;
       else {
         // relief: points within 60 m of a wider road are exempt (sampled every 0.25 m)
+        // Reported distance: the smallest sample distance among samples that can matter, ie
+        // samples already at or beyond the requirement (pass either way) and samples short
+        // of it that are not exempt. Exemption is only looked up for samples short of it.
         dist = Infinity;
         for (const q of samplePoints(segs, 0.25)) {
-          const nearWide = partners.some((w) => pointPolylineDist(q, site.chains[w]!.points) <= PARAMS.reliefReach);
-          if (!nearWide) dist = Math.min(dist, pointPolylineDist(q, c.points));
+          const dq = pointPolylineDist(q, c.points);
+          if (dq >= dist) continue; // cannot lower the minimum
+          if (dq < req - TOL) {
+            const nearWide = partners.some((w) => pointPolylineDist(q, site.chains[w]!.points) <= PARAMS.reliefReach + TOL);
+            if (nearWide) continue;
+          }
+          dist = dq;
         }
+        reliefCache.set(p.polygons, dist);
       }
       const margin = dist - req;
       if (margin < worst2x.margin) worst2x = { margin, level: p.level, dist, req };
@@ -97,12 +127,30 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
   // geometry sanity
   let outside = 0;
   let notNested = 0;
+  const seen = new Set<unknown>();
+  // vertices shared with the floor below are trivially inside it; key them by exact
+  // coordinates (two doubles hashed into one number; a collision only costs a full test)
+  const key = (v: XY) => v[0] * 1_000_003 + v[1];
   plates.forEach((p, i) => {
+    const below = plates[i - 1]?.polygons;
+    if (below === p.polygons) return; // same geometry as the floor below: already checked, trivially nested
+    const belowVerts = new Map<number, XY[]>();
+    if (below) {
+      for (const poly of below) for (const ring of poly) for (const v of ring) {
+        const k = key(v);
+        const list = belowVerts.get(k);
+        if (list) list.push(v);
+        else belowVerts.set(k, [v]);
+      }
+    }
+    const shared = (v: XY) => (belowVerts.get(key(v)) ?? []).some((w) => w[0] === v[0] && w[1] === v[1]);
+    const checkPlot = !seen.has(p.polygons);
+    seen.add(p.polygons);
     for (const poly of p.polygons) {
       for (const ring of poly) {
         for (const v of ring) {
-          if (!pointInPolygons(v, plotPoly, TOL)) outside++;
-          if (i > 0 && !pointInPolygons(v, plates[i - 1]!.polygons, TOL)) notNested++;
+          if (checkPlot && !pointInPolygons(v, plotPoly, PARAMS.geomTol)) outside++;
+          if (below && !shared(v) && !pointInPolygons(v, below, PARAMS.geomTol)) notNested++;
         }
       }
     }
@@ -135,8 +183,9 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
   // distances per chain
   const tall = ms.floors > 2 || ms.height > 8;
   let clearMin = Infinity;
+  const segCache = new Map<unknown, [XY, XY][]>();
   for (const c of site.chains) {
-    const { minDist, worst2x } = chainMeasures(site, c, plates);
+    const { minDist, worst2x } = chainMeasures(site, c, plates, segCache);
     clearMin = Math.min(clearMin, minDist);
     const lbl = chainLabel(c);
     if (c.role === 'road') {

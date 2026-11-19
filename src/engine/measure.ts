@@ -94,11 +94,12 @@ function distToRing(p: XY, r: XY[]): number {
 /** Point inside a polygon set, counting points within tol of a boundary as inside. */
 export function pointInPolygons(p: XY, polys: Polygon[], tol: number): boolean {
   for (const poly of polys) {
-    for (const ring of poly) if (distToRing(p, ring) <= tol) return true;
-  }
-  for (const poly of polys) {
     const [outer, ...holes] = poly;
     if (outer && pointInRing(p, outer) && !holes.some((h) => pointInRing(p, h))) return true;
+  }
+  // outside by the ray test: still counts if it sits on a boundary (within tol)
+  for (const poly of polys) {
+    for (const ring of poly) if (distToRing(p, ring) <= tol) return true;
   }
   return false;
 }
@@ -115,9 +116,24 @@ export function polygonSegments(polys: Polygon[]): [XY, XY][] {
 }
 
 export function segmentsToPolylineDist(segs: [XY, XY][], q: XY[]): number {
+  // bounding boxes give a cheap lower bound; exact distances only where it could beat the minimum
+  const boxes: number[][] = [];
+  for (let j = 0; j + 1 < q.length; j++) {
+    const c = q[j]!;
+    const d = q[j + 1]!;
+    boxes.push([Math.min(c[0], d[0]), Math.min(c[1], d[1]), Math.max(c[0], d[0]), Math.max(c[1], d[1])]);
+  }
   let m = Infinity;
   for (const [a, b] of segs) {
-    for (let j = 0; j + 1 < q.length; j++) {
+    const x0 = Math.min(a[0], b[0]);
+    const y0 = Math.min(a[1], b[1]);
+    const x1 = Math.max(a[0], b[0]);
+    const y1 = Math.max(a[1], b[1]);
+    for (let j = 0; j < boxes.length; j++) {
+      const bx = boxes[j]!;
+      const gx = Math.max(0, bx[0]! - x1, x0 - bx[2]!);
+      const gy = Math.max(0, bx[1]! - y1, y0 - bx[3]!);
+      if (gx * gx + gy * gy >= m * m) continue;
       const d = segSegDist(a, b, q[j]!, q[j + 1]!);
       if (d < m) m = d;
     }

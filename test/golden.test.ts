@@ -10,9 +10,16 @@
 // - Road setback (ord. art. 50 / MR 55 art. 41), from the plot edge with gap 0:
 //   W < 10: 6 - W/2; 10 <= W <= 20: W/10; W > 20: 2.
 // - 2x rule (ord. art. 49 / MR 55 art. 44): floor top z needs z/2 - W from the edge.
+// - Engine margin: every setback is cut S = 7 mm wider than the law (PARAMS.safety), so a
+//   rectangle inset by legal distances a and b per side has sides (L - a1 - a2 - 2S).
+//   The law-only figure is given first in each comment.
 import { describe, expect, it } from 'vitest';
-import { roadSetback } from '../src/engine/rules.js';
+import { PARAMS, roadSetback } from '../src/engine/rules.js';
 import { RECT, input, level, ok, priv, road } from './helpers.js';
+
+const S = PARAMS.safety;
+/** Area of a w x h rectangle whose four sides each moved in by the margin S. */
+const rs = (w: number, h: number) => (w - 2 * S) * (h - 2 * S);
 
 const allPass = (r: ReturnType<typeof ok>) => {
   for (const d of r.designs) {
@@ -35,11 +42,13 @@ describe('G1: 40 x 50 m, 12 m road on the long side, condo', () => {
     // road needs max(6, 12/10 = 1.2, 2, z/2 - 12); z/2 - 12 > 6 only when z > 36.
     // depth (north-south) 40 - 6 - 6 = 28, width 50 - 6 - 6 = 38.
     const h = r.regimes.high.plates;
-    for (let k = 1; k <= 11; k++) expect(level(h, k).area).toBeCloseTo(1064, 6); // z1(11) = 34.5
-    // k = 12: z1 = 37.5 -> road 37.5/2 - 12 = 6.75 -> depth 40 - 6 - 6.75 = 27.25 -> 27.25 x 38
-    expect(level(h, 12).area).toBeCloseTo(1035.5, 6);
+    for (let k = 1; k <= 11; k++) expect(level(h, k).area).toBeCloseTo(rs(28, 38), 6); // z1(11) = 34.5
+    // k = 12: z1 = 37.5 -> road 37.5/2 - 12 = 6.75 -> depth 40 - 6 - 6.75 = 27.25 -> 27.25 x 38 = 1,035.5
+    expect(level(h, 12).area).toBeCloseTo(rs(27.25, 38), 6);
     // k = 20: z1 = 61.5 -> 18.75 -> depth 15.25 -> 579.5
-    expect(level(h, 20).area).toBeCloseTo(579.5, 6);
+    expect(level(h, 20).area).toBeCloseTo(rs(15.25, 38), 6);
+    // the floor table reports the legal distance, not the margin
+    expect(level(h, 12).dByChain[0]).toBeCloseTo(6.75, 9);
   });
 
   it('high envelope ends at floor 29 and sums to 21,622 m2', () => {
@@ -47,8 +56,12 @@ describe('G1: 40 x 50 m, 12 m road on the long side, condo', () => {
     // k = 29: depth 1.75 (>= 1.5 m sliver width), area 66.5; k = 30: depth 0.25 -> removed.
     // GFA = 11 x 1064 + 38 x sum_{k=12..29}(45.25 - 1.5k)
     //     = 11,704 + 38 x (18 x 45.25 - 1.5 x 369) = 11,704 + 38 x 261 = 21,622.
+    // with the margin: depth 45.25 - 1.5k - 2S (k = 29: 1.736 m, still >= 1.5)
+    let gfa = 11 * rs(28, 38);
+    for (let k = 12; k <= 29; k++) gfa += rs(45.25 - 1.5 * k, 38);
     expect(r.regimes.high.floors).toBe(29);
-    expect(r.regimes.high.gfa).toBeCloseTo(21622, 4);
+    expect(r.regimes.high.gfa).toBeCloseTo(gfa, 4);
+    expect(Math.abs(r.regimes.high.gfa - 21622)).toBeLessThan(60); // law-only figure; margin ~0.2%
   });
 
   it('permitted GFA = FAR 7 x 2,000 = 14,000 m2 (FAR reached 7.0)', () => {
@@ -63,8 +76,8 @@ describe('G1: 40 x 50 m, 12 m road on the long side, condo', () => {
     const l = r.regimes.low;
     expect(l.floors).toBe(7);
     expect(l.height).toBeCloseTo(22.5, 9);
-    for (const p of l.plates) expect(p.area).toBeCloseTo(1540, 6);
-    expect(l.gfa).toBeCloseTo(10780, 6);
+    for (const p of l.plates) expect(p.area).toBeCloseTo(rs(35, 44), 6);
+    expect(l.gfa).toBeCloseTo(7 * rs(35, 44), 6); // 10,780 by the law alone
   });
 
   it('low permitted GFA: footprint capped at 70% of plot = 1,400 m2 -> 7 x 1,400 = 9,800', () => {
@@ -106,10 +119,10 @@ describe('G2: same plot on an 8 m soi', () => {
     // floor 7 (z1 = 22.5): 22.5/2 - 8 = 3.25 -> depth 40 - 3.25 - 3 = 33.75 -> 33.75 x 44 = 1,485
     const l = r.regimes.low;
     expect(l.floors).toBe(7);
-    for (let k = 1; k <= 6; k++) expect(level(l.plates, k).area).toBeCloseTo(1540, 6);
-    expect(level(l.plates, 7).area).toBeCloseTo(1485, 6);
+    for (let k = 1; k <= 6; k++) expect(level(l.plates, k).area).toBeCloseTo(rs(35, 44), 6);
+    expect(level(l.plates, 7).area).toBeCloseTo(rs(33.75, 44), 6);
     expect(level(l.plates, 7).dByChain[0]).toBeCloseTo(3.25, 9);
-    expect(l.gfa).toBeCloseTo(6 * 1540 + 1485, 6); // 10,725
+    expect(l.gfa).toBeCloseTo(6 * rs(35, 44) + rs(33.75, 44), 6); // 10,725 by the law alone
   });
 
   it('private boundaries are 3 m on every floor (MR 55 art. 50(2): building > 9 m)', () => {
@@ -146,22 +159,22 @@ describe('G3: corner plot, 30 m road (south, 50 m) and 12 m road (west, 40 m)', 
     // narrow road 2x (z/2 - 12) lifted: the whole plot is within 40 m < 60 m of the wide road.
     // floors 1..23 (z1(23) = 70.5): 38 x 28 = 1,064.
     const h = r.regimes.high.plates;
-    for (let k = 1; k <= 23; k++) expect(level(h, k).area).toBeCloseTo(1064, 6);
+    for (let k = 1; k <= 23; k++) expect(level(h, k).area).toBeCloseTo(rs(38, 28), 6);
     // k = 24: z1 = 73.5 -> south 6.75 -> depth 34 - 6.75 = 27.25 -> 27.25 x 38 = 1,035.5
-    expect(level(h, 24).area).toBeCloseTo(1035.5, 6);
+    expect(level(h, 24).area).toBeCloseTo(rs(27.25, 38), 6);
     // last floor: depth 34 - (z1/2 - 30) >= 1.5 -> z1 <= 125 -> k = 41 (z1 124.5, depth 1.75)
     expect(r.regimes.high.floors).toBe(41);
   });
 
   it('without relief the 12 m road cuts from z > 36 m: floor 12 is 37.25 x 28 = 1,043 m2', () => {
     // z1(12) = 37.5 -> west 37.5/2 - 12 = 6.75 -> width 50 - 6.75 - 6 = 37.25
-    expect(level(off.regimes.high.plates, 12).area).toBeCloseTo(1043, 6);
-    expect(level(r.regimes.high.plates, 12).area).toBeCloseTo(1064, 6);
+    expect(level(off.regimes.high.plates, 12).area).toBeCloseTo(rs(37.25, 28), 6);
+    expect(level(r.regimes.high.plates, 12).area).toBeCloseTo(rs(38, 28), 6);
   });
 
   it('low regime: 2 m from both roads (clear space binds), 3 m private: 45 x 35 = 1,575 m2', () => {
     // south: max(2 (W > 20), 2 clear) = 2; west: max(1.2, 2) = 2; 2x for 12 m: 22.5/2 - 12 < 0.
-    for (const p of r.regimes.low.plates) expect(p.area).toBeCloseTo(1575, 6);
+    for (const p of r.regimes.low.plates) expect(p.area).toBeCloseTo(rs(45, 35), 6);
   });
 
   it('designs pass the checker, including the 2x check beyond 60 m of the wide road', () => {
@@ -179,18 +192,24 @@ describe('G4: L-shaped (concave) plot on a 10 m road', () => {
     // inset 6: strip x 6..34, y 6..14 (28 x 8 = 224) + strip x 6..14, y 14..34 (8 x 20 = 160)
     // + the square x 14..20, y 14..20 outside the 6 m circle around the reflex vertex (20, 20):
     //   36 - pi x 36 / 4 = 7.7257. Total 391.7257 m2 (chords add <= ~0.03 m2).
+    // With the margin (r = 6 + S): bottom (28 - 2S)(8 - 2S) + left (8 - 2S) x 20 + r^2 (1 - pi/4).
     expect(r.plot.area).toBeCloseTo(1200, 6);
     const h = r.regimes.high.plates;
-    const exact = 224 + 160 + 36 - (Math.PI * 36) / 4;
+    const R = 6 + S;
+    const corner = R * R * (1 - Math.PI / 4);
+    const exact = (28 - 2 * S) * (8 - 2 * S) + (8 - 2 * S) * 20 + corner;
+    expect(Math.abs(exact - 391.7257)).toBeLessThan(2); // law-only figure; margin costs ~110 m x S
     for (let k = 1; k <= 10; k++) expect(Math.abs(level(h, k).area - exact)).toBeLessThan(0.1); // z1(10) = 31.5 <= 32
     // k = 11: z1 = 34.5 -> road 34.5/2 - 10 = 7.25 -> bottom strip 28 x (14 - 7.25) = 189
-    expect(Math.abs(level(h, 11).area - (189 + 160 + 36 - (Math.PI * 36) / 4))).toBeLessThan(0.1);
+    const f11 = (28 - 2 * S) * (6.75 - 2 * S) + (8 - 2 * S) * 20 + corner;
+    expect(Math.abs(level(h, 11).area - f11)).toBeLessThan(0.1);
   });
 
   it('low plates: 3 m private, 2 m road, 3 m round join at the reflex corner', () => {
     // strip x 3..37, y 2..17 (34 x 15 = 510) + strip x 3..17, y 17..37 (14 x 20 = 280)
     // + 9 - pi x 9 / 4 = 1.9314 -> 791.93 m2 on 7 floors.
-    const exact = 510 + 280 + 9 - (Math.PI * 9) / 4;
+    const R = 3 + S;
+    const exact = (34 - 2 * S) * (15 - 2 * S) + (14 - 2 * S) * 20 + R * R * (1 - Math.PI / 4);
     for (const p of r.regimes.low.plates) expect(Math.abs(p.area - exact)).toBeLessThan(0.1);
     expect(r.regimes.low.floors).toBe(7);
   });
@@ -243,7 +262,7 @@ describe('G6: 5,000 m2 plot on a 12 m road (30,000 m2 cap)', () => {
 
   it('permitted GFA 30,000 m2, FAR reached 6.0, limited by MR 33 art. 2', () => {
     expect(r.plot.area).toBeCloseTo(5000, 6);
-    expect(level(r.regimes.high.plates, 1).area).toBeCloseTo(3344, 6);
+    expect(level(r.regimes.high.plates, 1).area).toBeCloseTo(rs(88, 38), 6);
     expect(r.regimes.high.permittedGfa).toBeCloseTo(30000, 6);
     expect(r.regimes.high.farReached).toBeCloseTo(6, 9);
     expect(r.regimes.high.limitedBy).toContain('art. 2');
