@@ -97,3 +97,63 @@ describe('checker', () => {
     expect(checks.some((c) => c.status === 'fail')).toBe(true);
   });
 });
+
+const plate = (k: number, polys: XY[][][], area: number): FloorPlate =>
+  ({ level: k, z0: k === 1 ? 0 : floorTop(k - 1, H), z1: floorTop(k, H), polygons: polys, area, dByChain: [] });
+const row = (checks: ReturnType<typeof checkDesign>['checks'], id: string) => checks.find((c) => c.id === id)!;
+
+describe('checker: containment (open item #9)', () => {
+  const g1 = site([road(12), priv(), priv(), priv()]);
+  const court = rect(16, 14, 34, 26).reverse(); // courtyard hole, clockwise
+
+  it('fails an upper floor that roofs over the courtyard of the floor below', () => {
+    const ground = [[rect(6, 6, 44, 34), court]];
+    const roof = [[rect(6, 6, 44, 34)]];
+    const bad = checkDesign(g1, [plate(1, ground, 848), plate(2, roof, 1064)]);
+    expect(row(bad.checks, 'nested').status).toBe('fail');
+    expect(row(bad.checks, 'nested').actual).toContain('covers a courtyard of the floor below');
+    expect(row(bad.checks, 'inside-plot').status).toBe('pass');
+    // the same courtyard on both floors is nested
+    const good = checkDesign(g1, [plate(1, ground, 848), plate(2, [[rect(6, 6, 44, 34), court]], 848)]);
+    expect(row(good.checks, 'nested').status).toBe('pass');
+    expect(row(good.checks, 'nested').actual).toBe('contained');
+  });
+
+  it('fails a floor whose edge bridges the notch of a concave plot', () => {
+    // U-shaped plot: notch x 20..30 from y = 15 up to the north edge
+    const ring: XY[] = [[0, 0], [50, 0], [50, 40], [30, 40], [30, 15], [20, 15], [20, 40], [0, 40]];
+    const u: CheckSite = { ...g1, ring, chains: buildChains(ring, [road(12), priv(), priv(), priv(), priv(), priv(), priv(), priv()]) };
+    u.reliefPartners = u.chains.map(() => []);
+    const { checks } = checkDesign(u, [plate(1, [[rect(2, 20, 48, 30)]], 460)]);
+    expect(row(checks, 'inside-plot').status).toBe('fail');
+    expect(row(checks, 'inside-plot').actual).toContain('edge leaves');
+    expect(row(checkDesign(u, [plate(1, [[rect(2, 2, 48, 12)]], 460)]).checks, 'inside-plot').status).toBe('pass');
+  });
+});
+
+describe('checker: strict gates and distances', () => {
+  const hotel = (w: number): CheckSite => ({ ...site([road(w), priv(), priv(), priv()]), type: 'hotel' });
+  // four floors of 40 m x d on the 40 x 50 plot; 1,000.25 m2 each = 4,001 m2
+  const floors = (d: number) => tower(4, () => rect(5, 6, 45, 6 + d));
+
+  it('hotel: 4,001 m2 without a 12 m road fails (80 rooms x 50 m2 = 4,000 m2, the engine cap)', () => {
+    const over = checkDesign(hotel(10), floors(1000.25 / 40));
+    expect(over.measured.gfa).toBeCloseTo(4001, 6);
+    expect(row(over.checks, 'hotel-gate').status).toBe('fail'); // floor(4001 / 50) = 80 passed before
+    expect(row(checkDesign(hotel(10), floors(25)).checks, 'hotel-gate').status).toBe('pass'); // exactly 4,000 m2
+    expect(row(checkDesign(hotel(12), floors(1000.25 / 40)).checks, 'hotel-gate').status).toBe('pass'); // 12 m road
+    expect(row(checkDesign({ ...hotel(10), nearStation: true }, floors(1000.25 / 40)).checks, 'hotel-gate').status).toBe('pass');
+  });
+
+  it('a plate 0.5 mm short of a required distance fails', () => {
+    const g1 = site([road(12), priv(), priv(), priv()]);
+    // high-rise (11 floors, 34.5 m): MR 33 art. 4 needs 6 m from the road (y = 0) and the north boundary (y = 40)
+    expect(row(checkDesign(g1, tower(11, () => rect(6, 5.9995, 44, 34))).checks, 'mr33-4-0').status).toBe('fail');
+    expect(row(checkDesign(g1, tower(11, () => rect(6, 6, 44, 34.0005))).checks, 'mr33-4-1').status).toBe('fail');
+    expect(row(checkDesign(g1, tower(11, () => rect(6, 6, 44, 34))).checks, 'mr33-4-0').status).toBe('pass');
+    // low-rise (5 floors of 20 x 20 m, 16.5 m): 3 m from private boundaries (the west edge x = 0)
+    const lowPlates = (x0: number) => tower(5, () => rect(x0, 10, x0 + 20, 30));
+    expect(row(checkDesign(g1, lowPlates(3)).checks, 'private-1').status).toBe('pass');
+    expect(row(checkDesign(g1, lowPlates(2.9995)).checks, 'private-1').status).toBe('fail');
+  });
+});

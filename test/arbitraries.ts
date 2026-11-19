@@ -85,3 +85,18 @@ export const engineInput: fc.Arbitrary<EngineInput> = plotRing.chain((ring) =>
     units: 'm', ring, edges, type, nearStation, zone: { code: 'ย.9', far, osrPct: osr },
   })),
 );
+
+// ---------------------------------------------------------------------------
+// Wider zone generators (metamorphic M5). The base generator above draws FAR 6-7 and
+// OSR 4.5-5 only; monotonicity in FAR / OSR needs the full validated range, or it
+// cannot reach the case where open space binds (Codex #7).
+
+/** Zone FAR across [0.5, 20] (the validator accepts (0, 20]). */
+export const farWide = fc.double({ min: 0.5, max: 20, noNaN: true });
+/** Zone OSR (percent of GFA) across [0, 30]. */
+export const osrWide = fc.double({ min: 0, max: 30, noNaN: true });
+
+/** engineInput with FAR in [0.5, 20] and OSR in [0, 30]. */
+export const engineInputWideZone: fc.Arbitrary<EngineInput> = fc
+  .record({ base: engineInput, far: farWide, osr: osrWide })
+  .map(({ base, far, osr }): EngineInput => ({ ...base, zone: { code: 'ย.9', far, osrPct: osr } }));

@@ -5,8 +5,8 @@
 
 import { chainLabel } from './chains.js';
 import {
-  closeRing, pointInPolygons, pointPolylineDist, polygonSegments, polygonsArea, ringArea, samplePoints,
-  segmentsToPolylineDist,
+  closeRing, containmentViolationOf, pointPolylineDist, polygonSegments, polygonsArea, prepareShape, ringArea, samplePoints,
+  segmentsToPolylineDist, type ContainmentViolation, type Shape,
 } from './measure.js';
 import {
   PARAMS, RULES, TYPE_PARAMS, canalSetback, clearAround, narrowRoadSetback, privateSetback, roadSetback, roadSetbackApplies,
@@ -34,7 +34,10 @@ export interface Measured {
   high: boolean;
 }
 
+/** Distances pass only when measured >= required - TOL (float noise, not a millimetre). */
 const TOL = PARAMS.checkTol;
+/** m2, float noise for GFA against a fixed cap. */
+const AREA_EPS = 1e-6;
 const fmt = (v: number, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : String(v));
 const m2 = (v: number) => `${v.toLocaleString('en-US', { maximumFractionDigits: 1, minimumFractionDigits: 1 })} m2`;
 
@@ -129,39 +132,51 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
     return { checks, measured: ms };
   }
 
-  // geometry sanity
-  let outside = 0;
-  let notNested = 0;
-  const seen = new Set<unknown>();
-  // vertices shared with the floor below are trivially inside it; key them by exact
-  // coordinates (two doubles hashed into one number; a collision only costs a full test)
-  const key = (v: XY) => v[0] * 1_000_003 + v[1];
-  plates.forEach((p, i) => {
+  // geometry sanity: whole-polygon containment (vertices, every piece of every edge, and no
+  // courtyard of the floor below roofed over), within PARAMS.geomTol. Nesting is what makes
+  // the ground floor the footprint, so the open-space rows below rely on it.
+  let plotFail: string | null = null;
+  let nestFail: string | null = null;
+  const shapes = new Map<unknown, Shape>();
+  const shapeOf = (polys: FloorPlate['polygons']) => {
+    let s = shapes.get(polys);
+    if (!s) {
+      s = prepareShape(polys);
+      shapes.set(polys, s);
+    }
+    return s;
+  };
+  const plotShape = prepareShape(plotPoly);
+  const where = (v: ContainmentViolation) => `(${fmt(v.at[0], 3)}, ${fmt(v.at[1], 3)})`;
+  // geometries known to be inside the plot (within tol): a floor whose boundary lies exactly in
+  // a floor below that is inside the plot is inside it too (the plot has no holes), so its own
+  // plot test is skipped; tolerance never accumulates, as only an exact nesting is chained
+  const inPlot = new Set<unknown>();
+  for (let i = 0; i < plates.length; i++) {
+    const p = plates[i]!;
     const below = plates[i - 1]?.polygons;
-    if (below === p.polygons) return; // same geometry as the floor below: already checked, trivially nested
-    const belowVerts = new Map<number, XY[]>();
-    if (below) {
-      for (const poly of below) for (const ring of poly) for (const v of ring) {
-        const k = key(v);
-        const list = belowVerts.get(k);
-        if (list) list.push(v);
-        else belowVerts.set(k, [v]);
-      }
+    if (below === p.polygons) continue; // same geometry as the floor below: already checked, trivially nested
+    const A = shapeOf(p.polygons);
+    if (below && nestFail === null) {
+      const info = { exact: true };
+      const v = containmentViolationOf(A, shapeOf(below), PARAMS.geomTol, info);
+      if (v) {
+        nestFail = v.kind === 'hole'
+          ? `floor ${p.level}: covers a courtyard of the floor below at ${where(v)}`
+          : `floor ${p.level}: ${v.kind === 'vertex' ? 'corner outside the floor below' : 'edge leaves the floor below'} at ${where(v)}`;
+      } else if (info.exact && inPlot.has(below)) inPlot.add(p.polygons);
     }
-    const shared = (v: XY) => (belowVerts.get(key(v)) ?? []).some((w) => w[0] === v[0] && w[1] === v[1]);
-    const checkPlot = !seen.has(p.polygons);
-    seen.add(p.polygons);
-    for (const poly of p.polygons) {
-      for (const ring of poly) {
-        for (const v of ring) {
-          if (checkPlot && !pointInPolygons(v, plotPoly, PARAMS.geomTol)) outside++;
-          if (below && !shared(v) && !pointInPolygons(v, below, PARAMS.geomTol)) notNested++;
-        }
-      }
+    if (plotFail === null && !inPlot.has(p.polygons)) {
+      const v = containmentViolationOf(A, plotShape, PARAMS.geomTol);
+      if (v) plotFail = `floor ${p.level}: ${v.kind === 'vertex' ? 'corner outside' : 'edge leaves'} at ${where(v)}`;
+      else inPlot.add(p.polygons);
     }
-  });
-  checks.push(row('inside-plot', 'ENVELOPE', 'Every floor inside the plot', '0 vertices outside', `${outside} outside`, outside === 0 ? 'pass' : 'fail'));
-  checks.push(row('nested', 'ENVELOPE', 'Upper floors within lower floors (footprint = ground floor)', '0 vertices outside the floor below', `${notNested} outside`, notNested === 0 ? 'pass' : 'fail'));
+  }
+  checks.push(row('inside-plot', 'ENVELOPE', 'Every floor inside the plot', 'contained (corners and edges)', plotFail ?? 'contained', plotFail === null ? 'pass' : 'fail'));
+  checks.push(row(
+    'nested', 'ENVELOPE', 'Upper floors within lower floors (footprint = ground floor)',
+    'contained in the floor below, no courtyard covered', nestFail ?? 'contained', nestFail === null ? 'pass' : 'fail',
+  ));
 
   // class
   checks.push(row(
@@ -249,9 +264,15 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
     checks.push(row('office-gate', 'Z16-OFFICE', 'Office over 10,000 m2 needs a 16 m road or a station', '<= 10,000 m2, or 16 m road, or station', `${m2(ms.gfa)}, widest road ${widestRoad} m${site.nearStation ? ', near station' : ''}`, ok ? 'pass' : 'fail'));
   }
   if (site.type === 'hotel') {
-    const rooms = Math.floor(ms.gfa / PARAMS.hotelGfaPerRoom);
-    const ok = rooms <= PARAMS.hotelGateRooms || widestRoad >= PARAMS.hotelGateWidth || site.nearStation;
-    checks.push(row('hotel-gate', 'Z16-HOTEL', 'Hotel over 80 rooms needs a 12 m road or a station', '<= 80 rooms, or 12 m road, or station', `~${rooms} rooms (${PARAMS.hotelGfaPerRoom} m2 each), widest road ${widestRoad} m${site.nearStation ? ', near station' : ''}`, ok ? 'pass' : 'fail'));
+    // the same cap as the engine (envelope.ts fixedCaps): 80 rooms x 50 m2 = 4,000 m2 of GFA
+    const cap = PARAMS.hotelGateRooms * PARAMS.hotelGfaPerRoom;
+    const ok = ms.gfa <= cap + AREA_EPS || widestRoad >= PARAMS.hotelGateWidth || site.nearStation;
+    checks.push(row(
+      'hotel-gate', 'Z16-HOTEL', 'Hotel over 80 rooms needs a 12 m road or a station',
+      `<= ${m2(cap)} (80 rooms x ${PARAMS.hotelGfaPerRoom} m2), or 12 m road, or station`,
+      `${m2(ms.gfa)} (~${fmt(ms.gfa / PARAMS.hotelGfaPerRoom, 1)} rooms), widest road ${widestRoad} m${site.nearStation ? ', near station' : ''}`,
+      ok ? 'pass' : 'fail',
+    ));
   }
   if (ms.floors > 3) {
     checks.push(row('front-open', 'ORD52-6-FRONT', '12 m front open space (over 3 storeys)', '12 m wide, 1/6 of perimeter', 'site layout not modelled', 'not-assessed', 'depends on the site plan; art. 53 may waive it'));

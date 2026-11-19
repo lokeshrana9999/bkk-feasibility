@@ -115,31 +115,70 @@ function stack(
   return { plates, gfa, hitTarget: target - gfa < PARAMS.minPlateArea, stop };
 }
 
-function frontage(site: Site): { o: XY; u: XY; v: XY } {
-  // main frontage: longest road chain (then widest); no road: longest edge
-  const roads = site.chains.filter((c) => c.role === 'road');
-  let pts: XY[];
-  if (roads.length > 0) {
-    const best = roads.reduce((m, c) => (c.length > m.length + 1e-9 || (Math.abs(c.length - m.length) <= 1e-9 && (c.width ?? 0) > (m.width ?? 0)) ? c : m));
-    pts = best.points;
-  } else pts = [...site.ring, site.ring[0]!];
-  let bi = 0;
-  let bl = -1;
-  for (let i = 0; i + 1 < pts.length; i++) {
-    const l = Math.hypot(pts[i + 1]![0] - pts[i]![0], pts[i + 1]![1] - pts[i]![1]);
-    if (l > bl) {
-      bl = l;
-      bi = i;
-    }
-  }
-  const a = pts[bi]!;
-  const b = pts[bi + 1]!;
-  const u: XY = [(b[0] - a[0]) / bl, (b[1] - a[1]) / bl];
-  return { o: a, u, v: [-u[1], u[0]] }; // ring is CCW, so the left normal points into the plot
+interface Frontage {
+  o: XY;
+  u: XY;
+  v: XY;
+  /** canonical tie-break key: the segment's ends in mm, smaller end first */
+  key: number[];
 }
 
-function bandPath(site: Site, ground: Paths64, depth: number): Path64 | null {
-  const { o, u, v } = frontage(site);
+/** Frontages within 1 mm count as equally long. */
+const TIE_LEN = 0.001;
+
+/**
+ * Candidate directions for the slab: the longest segment of the main frontage. The main
+ * frontage is the longest road chain, then the widest; with no road, the plot ring. Chains
+ * and segments tied within 1 mm all become candidates, sorted by a key built from their
+ * coordinates, so the set and its order do not depend on where the ring starts or which way
+ * it runs (open item #11). buildDesigns evaluates every candidate and keeps the largest slab.
+ */
+function frontageCandidates(site: Site): Frontage[] {
+  const roads = site.chains.filter((c) => c.role === 'road');
+  let runs: XY[][];
+  if (roads.length > 0) {
+    const maxLen = Math.max(...roads.map((c) => c.length));
+    const long = roads.filter((c) => c.length >= maxLen - TIE_LEN);
+    const maxW = Math.max(...long.map((c) => c.width ?? 0));
+    runs = long.filter((c) => (c.width ?? 0) >= maxW - 1e-9).map((c) => c.points);
+  } else runs = [[...site.ring, site.ring[0]!]];
+  const segs: { a: XY; b: XY; l: number }[] = [];
+  for (const pts of runs) {
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const a = pts[i]!;
+      const b = pts[i + 1]!;
+      segs.push({ a, b, l: Math.hypot(b[0] - a[0], b[1] - a[1]) });
+    }
+  }
+  const maxL = Math.max(...segs.map((s) => s.l));
+  const mm = (p: XY) => [Math.round(p[0] * 1000), Math.round(p[1] * 1000)];
+  const lex = (p: number[], q: number[]) => {
+    for (let i = 0; i < p.length; i++) if (p[i] !== q[i]) return p[i]! - q[i]!;
+    return 0;
+  };
+  const out: Frontage[] = segs
+    .filter((s) => s.l >= maxL - TIE_LEN && s.l > 0)
+    .map(({ a, b, l }) => {
+      const u: XY = [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+      const ka = mm(a);
+      const kb = mm(b);
+      return { o: a, u, v: [-u[1], u[0]] as XY, key: lex(ka, kb) <= 0 ? [...ka, ...kb] : [...kb, ...ka] }; // ring is CCW: v points into the plot
+    });
+  out.sort((p, q) => lex(p.key, q.key));
+  // the band depends only on the line's direction, so parallel candidates (opposite sides of
+  // a rectangle) build the same slab: keep the first of each direction
+  const dir = (f: Frontage): XY => (f.u[0] < -1e-12 || (Math.abs(f.u[0]) <= 1e-12 && f.u[1] < 0) ? [-f.u[0], -f.u[1]] : f.u);
+  return out.filter((f, i) => {
+    const d = dir(f);
+    return !out.slice(0, i).some((g) => {
+      const e = dir(g);
+      return Math.abs(e[0] - d[0]) <= 1e-9 && Math.abs(e[1] - d[1]) <= 1e-9;
+    });
+  });
+}
+
+function bandPath(f: Frontage, ground: Paths64, depth: number): Path64 | null {
+  const { o, u, v } = f;
   let umin = Infinity;
   let umax = -Infinity;
   let vmin = Infinity;
@@ -229,31 +268,39 @@ export function buildDesigns(site: Site, regime: Regime, envPaths: Paths64[], en
     if (r.plates.length > 0) out.push(draft('tower-podium', 'Tower on podium', regime, site, target, r, a > 0 ? foot.rule : null));
   }
 
-  // 2. Slab parallel to the main frontage
+  // 2. Slab parallel to the main frontage. Tied frontages (open item #11): every candidate
+  //    is built and the one with the most GFA kept; equal GFA keeps the first in key order.
   {
-    let depth = tp.slabDepth;
-    const fit = (d: number) => {
-      const band = bandPath(site, F(0), d);
-      return band ? keep(and(F(0), [band])) : [];
-    };
-    let footCut: string | null = null;
-    if (area(fit(depth)) > footLimit) {
-      let lo = 0;
-      let hi = depth;
-      while (hi - lo > 0.005) {
-        const mid = (lo + hi) / 2;
-        if (area(fit(mid)) <= footLimit) lo = mid;
-        else hi = mid;
+    const slab = (f: Frontage): { r: StackResult; footCut: string | null } | null => {
+      let depth = tp.slabDepth;
+      const fit = (d: number) => {
+        const band = bandPath(f, F(0), d);
+        return band ? keep(and(F(0), [band])) : [];
+      };
+      let footCut: string | null = null;
+      if (area(fit(depth)) > footLimit) {
+        let lo = 0;
+        let hi = depth;
+        while (hi - lo > 0.005) {
+          const mid = (lo + hi) / 2;
+          if (area(fit(mid)) <= footLimit) lo = mid;
+          else hi = mid;
+        }
+        depth = lo;
+        footCut = foot.rule;
       }
-      depth = lo;
-      footCut = foot.rule;
-    }
-    const band = bandPath(site, F(0), depth);
-    if (band && depth >= 6) {
+      const band = bandPath(f, F(0), depth);
+      if (!band || depth < 6) return null;
       // above the ground floor, the floor below already carries the band: one intersection per floor
       const r = stack(envPlates, target.value, (k, prev) => and(F(k), prev ?? [band]), (k) => F(k) === F(k - 1));
-      if (r.plates.length > 0) out.push(draft('slab', 'Slab along the frontage', regime, site, target, r, footCut));
+      return r.plates.length > 0 ? { r, footCut } : null;
+    };
+    let best: { r: StackResult; footCut: string | null } | null = null;
+    for (const f of frontageCandidates(site)) {
+      const s = slab(f);
+      if (s && (!best || s.r.gfa > best.r.gfa + 1e-6)) best = s;
     }
+    if (best) out.push(draft('slab', 'Slab along the frontage', regime, site, target, best.r, best.footCut));
   }
 
   // 3. Courtyard: a ring of wings around a fixed courtyard cut from the ground plate.

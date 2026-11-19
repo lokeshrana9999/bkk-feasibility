@@ -183,7 +183,7 @@ export const PARAMS = Object.freeze({
   // Every setback buffer is cut this much wider than the law, so arc chords (10 mm) and
   // integer-millimetre rounding (measured up to ~2.6 mm; budget 5 mm) can never bring a plate closer than the legal distance.
   safety: 0.015, // m
-  checkTol: 0.001, // m, float noise only: the checker passes no distance that measures short
+  checkTol: 1e-6, // m, float noise only: the checker passes no distance that measures short (0.5 mm short fails)
   geomTol: 0.002, // m, containment (inside plot / inside the floor below): boolean output can move a vertex ~1-2 mm
   parapet: 0, // m
 });

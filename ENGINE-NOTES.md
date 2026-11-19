@@ -25,8 +25,8 @@ Places where `assumptions.md` or `engine-plan.md` and the source text disagree, 
 | Integer grid | 1 mm | clipper2-ts works in integer millimetres |
 | Arc chord tolerance | 10 mm (`PARAMS.arcTol`) | round joins are polygons; chords sit inside the true arc |
 | Safety margin | 15 mm (`PARAMS.safety`) | every setback buffer is cut this much wider than the law, so chords plus rounding can never bring a plate closer than the legal distance |
-| Checker distance tolerance | 1 mm (`PARAMS.checkTol`) | float noise only: no distance that measures short passes |
-| Containment tolerance | 2 mm (`PARAMS.geomTol`) | "inside the plot" and "inside the floor below"; boolean output can move a vertex about 1 mm |
+| Checker distance tolerance | 1e-6 m (`PARAMS.checkTol`) | float noise only: a distance 0.5 mm short fails (rule-claims test) |
+| Containment tolerance | 2 mm (`PARAMS.geomTol`) | "inside the plot" and "inside the floor below" (`containsPolygons`: vertices, edge pieces, courtyards of the floor below); boolean output can move a vertex about 1 mm |
 
 `FloorPlate.dByChain` reports the *legal* distance; the geometry is cut 15 mm wider. A 28 x 38 m plate therefore reads 1,062 m2, not 1,064 m2 (`test/golden.test.ts` writes both figures). `test/deficit.local.ts` measures the worst shortfall of any envelope vertex against its required distance: after the fixes it found none over 300 random plots (before the fixes: 6.6 mm from compounding rounding, plus false alarms at the 60 m relief edge).
 
@@ -78,4 +78,18 @@ Codex (read-only, extra-high reasoning) found 13 failures; 12 were reproduced he
 | 8 | a 4° rotation closed an exact 12 m frontage | 1 mm tolerance on the frontage length |
 | 10 | checker verdict depended on shared arrays | relief cache keyed by geometry and requirement |
 
-Open: #9 (checker tests nesting by vertices only, so a hand-made upper floor can roof over a courtyard), #11 (equal frontages tie by ring order for the slab), #12 (antimeridian plots), #13 (many road edges take seconds; 80 edges ~4-9 s).
+Also fixed since: #9 (checker containment now tests edges and courtyards, `measure.ts` `containsPolygons`), #11 (slab frontage chosen canonically among tied frontages, by most GFA). Open: #12 (antimeridian plots), #13 (many road edges take seconds; 80 edges ~4-9 s).
+
+## Verification layers (2026-11-19)
+
+Built from `fv-architecture.md` (side-session notes). Run locally: `powershell -File scripts/ci.ps1` (typecheck + suite, ~80 s), `-Nightly` (1,000 runs per property), `node scripts/acceptance.mjs` (runs the new tests against the pre-fix commit `3e2b5be`; a test that passes there is not evidence). No GitHub CI by choice.
+
+| Layer | Files | What it guards |
+|---|---|---|
+| Independent rule oracle | `oracle/` (74-row clause table, written blind from `sources/*.txt`) | misreadings: the engine may be stricter than the oracle, never laxer (`test/oracle-diff.test.ts`); property tests P2/P3 now take distances from the oracle |
+| Independence + citations | `test/independence.test.ts`, `test/oracle-citations.test.ts` | the oracle shares no code with the engine; every quoted Thai fragment is on its cited line |
+| Metamorphic | `test/metamorphic.test.ts` (M1-M6) | rotation/mirror, ring start and reversal, checker clone, edge split and 500+ densify, FAR/OSR monotonicity, shrink still passes |
+| Rule claims | `test/rule-claims.test.ts` | stricter of readings, monotonicity, low <= high, clamp direction, caps <=> checker, no short distance passes |
+| Containment | `test/containment.test.ts`, `test/canonical.test.ts` | #9 and #11 |
+
+Oracle disagreements are logged in `oracle/DISAGREEMENTS.md` (12 rows, all open). Engine laxer than a clear reading, awaiting a decision: **D3** office/hotel road exceptions need a plot side of at least 16 / 12 m on that road (zoning art. 36); the engine checks road width only. **D6/D7** the relief's 60 m building-length / width conditions (MR 55 arts. 45-46) are not checked. Deliberate tolerances: D1 (0.5 m frontage gap), D2 (1 mm frontage length).

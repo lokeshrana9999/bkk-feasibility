@@ -1,11 +1,14 @@
 // Property tests over random star / comb / rotated plots with random edge roles.
+// P2 and P3 take their distance requirements from the independent rule oracle (oracle/index.ts),
+// not from the engine's own chainDistance: see "oracle requirements" below for the mapping.
 import fc from 'fast-check';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
+import * as O from '../oracle/index.js';
 import { evaluate } from '../src/engine/index.js';
-import type { Chain, EngineInput, EngineResult, Envelope, FloorPlate, XY } from '../src/engine/index.js';
+import type { BuildingType, Chain, EngineInput, EngineResult, Envelope, FloorPlate, XY } from '../src/engine/index.js';
 import { reliefPartners } from '../src/engine/evaluate.js';
-import { pointInPolygons, pointPolylineDist, polygonsArea } from '../src/engine/measure.js';
-import { PARAMS, chainDistance } from '../src/engine/rules.js';
+import { pointInPolygons, pointPolylineDist, polygonsArea, polylineDist } from '../src/engine/measure.js';
+import { PARAMS } from '../src/engine/rules.js';
 import { engineInput } from './arbitraries.js';
 
 const RUNS = Number(process.env.PROP_RUNS ?? 80);
@@ -23,13 +26,147 @@ function vertices(p: FloorPlate): XY[] {
 }
 
 /**
- * Relief pairs (which road's 2x rule is lifted near which wider road). This is the legal
- * model itself (corner or second road, not the same road changing width), so the oracle
- * uses the engine's definition; the regression tests pin that definition down.
+ * The engine's relief pairs (which road's 2x rule it lifts near which wider road). P2 and P3
+ * take relief from the oracle; these pairs only tell whether the engine relieved a chain the
+ * oracle refuses for the 60 m building condition alone (DISAGREEMENTS D6 / D7).
  */
 function partners(r: EngineResult): number[][] {
   return reliefPartners(r.chains, true);
 }
+
+// ---------------------------------------------------------------------------
+// Oracle requirements (P2, P3)
+//
+// Mapping, engine -> oracle:
+//  - a stack of plates is a building: use = input type, height = top of the last plate,
+//    storeys = number of plates, GFA = sum of plate areas, largest floor = largest plate. For an
+//    envelope (the space a building may fill, not a building) GFA is the envelope's permitted
+//    GFA and the largest floor is capped by it: the low envelope's plates can add up to more
+//    than 10,000 m2, but the building it permits stays under 9,999 m2.
+//  - a road chain is (width, gap) and each floor is (level, top); a canal is (width, gap); a
+//    private chain is a boundary with openings. Clear space (ord. 55 / MR 33 art. 3) applies on
+//    every edge. The 2x readings (MR 55 art. 44, ord. 49) are split off as the part that
+//    wider-road relief can lift; everything else is the base. Gap land is treated as public
+//    (the engine's model); the oracle would add a private setback if it were someone's land
+//    (DISAGREEMENTS D12).
+//  - wider-road relief per (narrow road chain, wider road chain): corner = they meet at a turn
+//    of 30 degrees or more, or they do not meet and their end-to-end directions differ by 30
+//    degrees or more (eg a chamfered corner); flanked (art. 45) = they do not meet and run within
+//    30 degrees of parallel; sameRoad = equal names, or (unnamed) meeting at a turn under 30
+//    degrees (the engine's inference, D9); roads apart = polyline distance; building length /
+//    width along a road = extent of the stack's largest plate projected on that chain's end-to-end
+//    direction. If MR 55 relieves the narrow road (reliefEligible) its 2x check is skipped; if
+//    the oracle cannot assess, skipped and counted; if the only reason it refuses is the 60 m
+//    building length / width condition the engine does not model (D6 / D7) and the engine does
+//    relieve that chain, skipped and counted as allowlisted. Otherwise every vertex must meet
+//    the oracle's 2x distance.
+
+const TWO_X_CITES = new Set(['mr55-update.txt:434', 'bma-ordinance-2544.txt:703']); // clauses.md R-55-44, R-ORD-49
+const SKIPS = { checks2x: 0, relievedByOracle: 0, notAssessable: 0, allowD6: 0, allowD7: 0 };
+
+function oracleBuilding(type: BuildingType, plates: FloorPlate[], env?: Envelope): O.Building {
+  const areas = plates.map((p) => p.area);
+  const total = areas.reduce((s, a) => s + a, 0);
+  const gfa = env && env.permittedGfa > 0 ? Math.min(env.permittedGfa, total) : total;
+  return { use: type, heightM: plates[plates.length - 1]!.z1, storeys: plates.length, gfaM2: gfa, largestFloorM2: Math.min(Math.max(...areas), gfa) };
+}
+
+const finiteMax = (rs: O.Reading[]) => rs.reduce((m, r) => (Number.isFinite(r.d) && r.d > m ? r.d : m), 0);
+
+/** Oracle requirement for a chain at a floor: base (never relieved) and the 2x part. */
+function oracleReq(b: O.Building, c: Chain, level: number, top: number, clear: number): { base: number; twoX: number } {
+  if (c.role === 'road') {
+    const rs = O.requiredRoadDistance(b, { widthM: c.width ?? 0, gapM: c.gap }, { level, topM: top }).readings;
+    return { base: Math.max(clear, finiteMax(rs.filter((r) => !TWO_X_CITES.has(r.cite)))), twoX: finiteMax(rs.filter((r) => TWO_X_CITES.has(r.cite))) };
+  }
+  if (c.role === 'private') return { base: Math.max(clear, O.requiredPrivateDistance(b, { level, topM: top }).max), twoX: 0 };
+  return { base: Math.max(clear, O.requiredCanalDistance(b, { widthM: c.width ?? 0, gapM: c.gap }).max), twoX: 0 };
+}
+
+const same = (a: XY, b: XY) => Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
+/** Turn (degrees) where a ends and b starts, or null if they do not meet that way. */
+function turn(a: Chain, b: Chain): number | null {
+  const p = a.points;
+  const q = b.points;
+  if (a.closed || b.closed || p.length < 2 || q.length < 2 || !same(p[p.length - 1]!, q[0]!)) return null;
+  const u = [p[p.length - 1]![0] - p[p.length - 2]![0], p[p.length - 1]![1] - p[p.length - 2]![1]];
+  const v = [q[1]![0] - q[0]![0], q[1]![1] - q[0]![1]];
+  return Math.abs((Math.atan2(u[0]! * v[1]! - u[1]! * v[0]!, u[0]! * v[0]! + u[1]! * v[1]!) * 180) / Math.PI);
+}
+
+/** Angle (0-90 degrees) between two chains' end-to-end directions, ignoring orientation. */
+function skewDeg(a: Chain, b: Chain): number {
+  const dir = (c: Chain) => {
+    const p = c.points[0]!;
+    const q = c.points[c.points.length - 1]!;
+    return Math.atan2(q[1] - p[1], q[0] - p[0]);
+  };
+  let d = Math.abs(dir(a) - dir(b)) % Math.PI;
+  if (d > Math.PI / 2) d = Math.PI - d;
+  return (d * 180) / Math.PI;
+}
+
+/** Extent of a plate's vertices along a chain's end-to-end direction, or undefined if it has none. */
+function extentAlong(c: Chain, vs: XY[]): number | undefined {
+  const a = c.points[0]!;
+  const z = c.points[c.points.length - 1]!;
+  const L = Math.hypot(z[0] - a[0], z[1] - a[1]);
+  if (c.closed || L < 1e-9 || vs.length === 0) return undefined;
+  const d = [(z[0] - a[0]) / L, (z[1] - a[1]) / L];
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of vs) {
+    const t = v[0] * d[0]! + v[1] * d[1]!;
+    lo = Math.min(lo, t);
+    hi = Math.max(hi, t);
+  }
+  return hi - lo;
+}
+
+type TwoXMode = 'check' | 'skip';
+/** Whether the oracle requires road chain c's 2x rule for this stack (see the mapping above). */
+function twoXMode(r: EngineResult, pr: number[][], c: Chain, plates: FloorPlate[]): TwoXMode {
+  const largest = plates.reduce((m, p) => (p.area > m.area ? p : m), plates[0]!);
+  const vs = vertices(largest);
+  let notAssessable = false;
+  let allow: 'D6' | 'D7' | null = null;
+  for (const w of r.chains) {
+    if (w.role !== 'road' || w.id === c.id || (w.width ?? 0) <= (c.width ?? 0)) continue;
+    const t = turn(c, w) ?? turn(w, c);
+    const corner = t !== null ? t >= PARAMS.cornerTurnDeg : skewDeg(c, w) >= PARAMS.cornerTurnDeg;
+    const sameRoad = c.name && w.name ? c.name === w.name : t !== null && t < PARAMS.cornerTurnDeg;
+    const facts = {
+      narrowWidthM: c.width ?? 0, wideWidthM: w.width ?? 0, sameRoad, corner, roadsApartM: polylineDist(c.points, w.points),
+      buildingLengthAlongNarrowM: extentAlong(c, vs), buildingWidthAlongWideM: extentAlong(w, vs),
+    };
+    const o = O.reliefEligible(facts);
+    if (o.eligible) {
+      SKIPS.relievedByOracle++;
+      return 'skip';
+    }
+    const art = o.reasons.find((x) => x.cite === (corner ? 'mr55-update.txt:452' : 'mr55-update.txt:447'));
+    if (art && Number.isNaN(art.d)) notAssessable = true;
+    else if ((pr[c.id] ?? []).includes(w.id)) {
+      // the engine relieves c near w; allowed only when the 60 m building condition is the sole reason
+      if (corner && (facts.buildingLengthAlongNarrowM ?? 0) > 60 && O.reliefEligible({ ...facts, buildingLengthAlongNarrowM: 0 }).eligible) allow = 'D6';
+      if (!corner && (facts.buildingWidthAlongWideM ?? 0) > 60 && O.reliefEligible({ ...facts, buildingWidthAlongWideM: 0 }).eligible) allow = 'D7';
+    }
+  }
+  if (notAssessable) {
+    SKIPS.notAssessable++;
+    return 'skip';
+  }
+  if (allow) {
+    SKIPS[allow === 'D6' ? 'allowD6' : 'allowD7']++;
+    return 'skip';
+  }
+  SKIPS.checks2x++;
+  return 'check';
+}
+
+afterAll(() => {
+  console.log(`P2/P3 oracle 2x sub-checks: ${JSON.stringify(SKIPS)}`);
+});
 
 function stacks(r: EngineResult): { name: string; plates: FloorPlate[]; env?: Envelope }[] {
   return [
@@ -39,29 +176,20 @@ function stacks(r: EngineResult): { name: string; plates: FloorPlate[]; env?: En
   ];
 }
 
-const nearWide = (v: XY, c: Chain, r: EngineResult, pr: number[][]) =>
-  (pr[c.id] ?? []).some((w) => pointPolylineDist(v, r.chains[w]!.points) <= PARAMS.reliefReach + TOL_D);
-
 /**
- * Per distinct floor geometry and chain: the smallest vertex distance to the chain
- * (all vertices) and over vertices outside the wider-road relief. Floors that share
- * geometry share the result, so checking "every vertex" stays affordable.
+ * Per distinct floor geometry and chain: the smallest vertex distance to the chain.
+ * Floors that share geometry share the result, so checking "every vertex" stays affordable.
  */
-function vertexMins(r: EngineResult, pr: number[][]) {
-  const cache = new Map<unknown, { all: number; free: number }[]>();
+function vertexMins(r: EngineResult) {
+  const cache = new Map<unknown, { all: number }[]>();
   return (p: FloorPlate) => {
     let m = cache.get(p.polygons);
     if (!m) {
       const vs = vertices(p);
       m = r.chains.map((c) => {
         let all = Infinity;
-        let free = Infinity;
-        for (const v of vs) {
-          const d = pointPolylineDist(v, c.points);
-          all = Math.min(all, d);
-          if (d < free && !nearWide(v, c, r, pr)) free = d;
-        }
-        return { all, free };
+        for (const v of vs) all = Math.min(all, pointPolylineDist(v, c.points));
+        return { all };
       });
       cache.set(p.polygons, m);
     }
@@ -89,24 +217,28 @@ describe('property tests', () => {
     );
   });
 
-  it('P2: every envelope vertex is at least d from every chain (rule formulas, own distances)', () => {
+  it('P2: every envelope vertex is at least the ORACLE distance from every chain (own distances)', () => {
     fc.assert(
       fc.property(engineInput, (i) => {
         const r = run(i);
         if (!r) return;
-        const mins = vertexMins(r, partners(r));
+        const pr = partners(r);
+        const mins = vertexMins(r);
         for (const env of [r.regimes.low, r.regimes.high]) {
+          if (env.plates.length === 0) continue;
+          // the envelope as a building of its own height, storeys and (permitted) GFA
+          const b = oracleBuilding(i.type, env.plates, env);
+          const clear = O.requiredClearSpace(b).max;
+          const modes = new Map<number, TwoXMode>();
+          for (const c of r.chains) if (c.role === 'road') modes.set(c.id, twoXMode(r, pr, c, env.plates));
           for (const p of env.plates) {
-            // the envelope as a building of its own height must satisfy the distance rules
-            const ctx = { level: p.level, z: p.z1, buildingH: env.height, art50: true, high: env.regime === 'high' };
             const m = mins(p);
             for (const c of r.chains) {
-              const { base, twoX } = chainDistance(c, ctx);
-              const { all, free } = m[c.id]!;
-              expect(all, `${env.regime} floor ${p.level} chain ${c.id}: ${all} < ${base}`).toBeGreaterThanOrEqual(base - TOL_D);
-              if (Number.isFinite(free)) {
-                const req = Math.max(base, twoX);
-                expect(free, `${env.regime} floor ${p.level} chain ${c.id} (2x): ${free} < ${req}`).toBeGreaterThanOrEqual(req - TOL_D);
+              const { base, twoX } = oracleReq(b, c, p.level, p.z1, clear);
+              const { all } = m[c.id]!;
+              expect(all, `${env.regime} floor ${p.level} chain ${c.id} (${c.role}): ${all} < oracle ${base}`).toBeGreaterThanOrEqual(base - TOL_D);
+              if (modes.get(c.id) === 'check') {
+                expect(all, `${env.regime} floor ${p.level} road ${c.id} (oracle 2x): ${all} < ${twoX}`).toBeGreaterThanOrEqual(twoX - TOL_D);
               }
             }
           }
@@ -121,20 +253,22 @@ describe('property tests', () => {
     );
   });
 
-  it('P3: z_k <= 2 x (dist + gap + W) at every vertex, for every road outside the wider-road relief', () => {
+  it('P3: the ORACLE 2x distance (MR 55 art. 44 / ord. 49) holds at every vertex of every stack, unless MR 55 relief lifts it', () => {
     fc.assert(
       fc.property(engineInput, (i) => {
         const r = run(i);
         if (!r) return;
-        const mins = vertexMins(r, partners(r));
+        const pr = partners(r);
+        const mins = vertexMins(r);
         for (const s of stacks(r)) {
-          for (const p of s.plates) {
-            const m = mins(p);
-            for (const c of r.chains) {
-              if (c.role !== 'road') continue;
-              const dist = m[c.id]!.free; // nearest vertex outside the wider-road relief
-              if (!Number.isFinite(dist)) continue;
-              expect(p.z1, `${s.name} floor ${p.level} road ${c.id}`).toBeLessThanOrEqual(2 * (dist + c.gap + (c.width ?? 0)) + 2 * TOL_D);
+          if (s.plates.length === 0) continue;
+          const b = oracleBuilding(i.type, s.plates, s.env);
+          for (const c of r.chains) {
+            if (c.role !== 'road' || twoXMode(r, pr, c, s.plates) === 'skip') continue;
+            for (const p of s.plates) {
+              const dist = mins(p)[c.id]!.all;
+              const { twoX } = oracleReq(b, c, p.level, p.z1, 0);
+              expect(dist, `${s.name} floor ${p.level} (top ${p.z1}) road ${c.id}: ${dist} < oracle 2x ${twoX}`).toBeGreaterThanOrEqual(twoX - TOL_D);
             }
           }
         }
