@@ -301,6 +301,7 @@ export function finishEnvelope(site: Site, regime: Regime, run: EnvelopeRun, all
     openSpace: A - footprint,
     stopReason: run.stopReason,
     sliverArea: run.sliverArea,
+    droppedArea: run.droppedArea,
   };
   if (reason !== undefined) env.reason = reason;
   return env;

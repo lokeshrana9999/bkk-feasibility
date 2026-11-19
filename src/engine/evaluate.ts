@@ -77,21 +77,19 @@ export function reliefPartners(chains: Chain[], enabled: boolean): number[][] {
   return out;
 }
 
-/** Length of the plot's projection onto a chain's main direction (its longest segment). */
+/**
+ * Length of the plot's projection onto a road chain's direction, taken end to end. (The
+ * longest segment was used first; on a densified outline a sawtooth tooth could be the longest
+ * segment, so the engine, on the simplified outline, and the checker, on the true one,
+ * disagreed: nightly M4b. End points survive simplification, rotation and densifying.)
+ */
 function extentAlong(pts: XY[], c: Chain): number {
-  let best = -1;
-  let ux = 1;
-  let uy = 0;
-  for (let i = 0; i + 1 < c.points.length; i++) {
-    const a = c.points[i]!;
-    const b = c.points[i + 1]!;
-    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    if (L > best) {
-      best = L;
-      ux = (b[0] - a[0]) / L;
-      uy = (b[1] - a[1]) / L;
-    }
-  }
+  const a = c.points[0]!;
+  const z = c.points[c.points.length - 1]!;
+  const L = Math.hypot(z[0] - a[0], z[1] - a[1]);
+  if (c.closed || L < 1e-9) return Infinity; // no direction: never grant relief
+  const ux = (z[0] - a[0]) / L;
+  const uy = (z[1] - a[1]) / L;
   let lo = Infinity;
   let hi = -Infinity;
   for (const p of pts) {

@@ -114,6 +114,12 @@ export interface Envelope {
    * geometry, eg a mirror image places arc chords differently; both results are legal.
    */
   sliverArea: number;
+  /**
+   * Area (m2, summed over floors) of parts dropped for being under 40 m2 or, above floor 1,
+   * thinner than 1.5 m on average. A part right at either line can be kept in one placement
+   * of a plot and dropped in another; both results are legal.
+   */
+  droppedArea: number;
 }
 
 export type CheckStatus = 'pass' | 'fail' | 'not-assessed';
