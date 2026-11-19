@@ -1,0 +1,168 @@
+// The single entry point. Pure: no DOM, fetch, Date or random; never throws.
+
+import { buildChains, chainLabel } from './chains.js';
+import { checkDesign, type CheckSite } from './checker.js';
+import { buildDesigns } from './designs.js';
+import { buildHigh, buildLow, highGate, roadFacts, type Site } from './envelope.js';
+import { cleanPlot } from './frame.js';
+import { bufferLine, or, toPath } from './geom.js';
+import { polylineDist } from './measure.js';
+import {
+  PARAMS, RULES, RULE_ORDER, TYPE_PARAMS, canalSetback, clearAround, privateSetback, roadSetback,
+} from './rules.js';
+import type {
+  AppliedRule, BuildingType, Chain, Design, EngineError, EngineInput, EngineOutput, Envelope, Regime, Warning,
+} from './types.js';
+
+const TYPES: readonly BuildingType[] = ['condo', 'apartment', 'office', 'hotel'];
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const fail = (code: EngineError['code'], message: string): EngineError => ({ ok: false, code, message });
+
+/** Pairs each narrower road chain with wider road chains within 60 m (corner or two roads). */
+function reliefPartners(chains: Chain[], enabled: boolean): number[][] {
+  const out: number[][] = chains.map(() => []);
+  if (!enabled) return out;
+  for (const n of chains) {
+    if (n.role !== 'road') continue;
+    for (const w of chains) {
+      if (w.role !== 'road' || w.id === n.id || (w.width ?? 0) <= (n.width ?? 0)) continue;
+      if (polylineDist(n.points, w.points) <= PARAMS.reliefReach) out[n.id]!.push(w.id);
+    }
+  }
+  return out;
+}
+
+function appliedRules(site: Site, chosen: Envelope, low: Envelope, high: Envelope, partners: number[][]): AppliedRule[] {
+  const A = site.plotArea;
+  const tp = TYPE_PARAMS[site.type];
+  const roads = site.chains.filter((c) => c.role === 'road');
+  const privs = site.chains.filter((c) => c.role === 'private');
+  const canals = site.chains.filter((c) => c.role === 'canal');
+  const rf = roadFacts(site.chains);
+  const reliefOn = partners.some((p) => p.length > 0);
+  const n = (v: number, d = 1) => v.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+  const val: Record<string, [string, boolean]> = {
+    'Z16-FAR': [`zone ${site.zone.code}: FAR ${site.zone.far} -> GFA <= ${n(site.zone.far * A)} m2`, true],
+    'Z16-OSR': [`open space >= ${site.zone.osrPct}% of GFA (${n((site.zone.osrPct / 100) * chosen.permittedGfa)} m2 at ${n(chosen.permittedGfa)} m2)`, true],
+    'Z16-PERM': ['not assessed', true],
+    'Z16-HOTEL': [site.type === 'hotel' ? (site.nearStation || rf.widestRoad >= PARAMS.hotelGateWidth ? 'waived (12 m road or station)' : `<= 80 rooms (~${n(PARAMS.hotelGateRooms * PARAMS.hotelGfaPerRoom, 0)} m2)`) : 'not a hotel', site.type === 'hotel'],
+    'Z16-OFFICE': [site.type === 'office' ? (site.nearStation || rf.widestRoad >= PARAMS.officeGateWidth ? 'waived (16 m road or station)' : '<= 10,000 m2') : 'not an office', site.type === 'office'],
+    'ORD52-OPEN': [`${tp.dwelling ? 30 : 10}% of plot = ${n((tp.dwelling ? 0.3 : 0.1) * A)} m2 (${tp.label}${site.type === 'hotel' ? ', non-dwelling call' : ''})`, true],
+    'MR33-6': [`${tp.dwelling ? 30 : 10}% of plot (same as above)`, chosen.regime === 'high'],
+    'MR55-33': [`${tp.dwelling ? 30 : 10}% of the largest floor`, true],
+    'ORD50-ROAD': [roads.length ? roads.map((c) => `${chainLabel(c)}: ${n(roadSetback(c.width ?? 0, c.gap), 2)} m`).join('; ') : 'no road edge', roads.length > 0],
+    'ORD49-2X': [roads.length ? roads.map((c) => `${chainLabel(c)}: floor top z needs z/2 - ${n((c.width ?? 0) + c.gap, 2)} m`).join('; ') : 'no road edge', roads.length > 0],
+    'MR55-46': [reliefOn ? site.chains.filter((c) => partners[c.id]!.length).map((c) => `${chainLabel(c)} relieved within 60 m of ${partners[c.id]!.map((w) => chainLabel(site.chains[w]!)).join(', ')}`).join('; ') : 'not a corner / two-road plot (or relief off)', reliefOn],
+    'MR55-50-PRIV': [privs.length ? `low regime: ${privateSetback(low.height)} m (building ${n(low.height, 2)} m)` : 'no private edge', privs.length > 0],
+    'ORD55-CLEAR': [`low regime: ${clearAround(low.height)} m; high regime: covered by 6 m`, true],
+    'MR55-42-CANAL': [canals.length ? canals.map((c) => `${chainLabel(c)}: ${canalSetback(c.width ?? 0, c.gap)} m`).join('; ') : 'no canal edge', canals.length > 0],
+    'MR33-1': [`chosen: ${chosen.regime} regime (${chosen.regime === 'high' ? 'MR 33 applies' : 'below 23 m and 10,000 m2'})`, true],
+    'MR33-2': [high.allowed ? `widest road with 12 m frontage: ${rf.widestGateRoad} m -> high regime allowed${rf.widestGateRoad >= PARAMS.bigGateWidth ? ', over 30,000 m2 allowed' : ', capped at 30,000 m2'}` : (high.reason ?? 'not allowed'), true],
+    'MR33-2-LINK': ['not assessed', high.allowed],
+    'MR33-3': ['not assessed', high.allowed],
+    'MR33-4': ['high regime: 6 m from every road and private edge, all floors', high.allowed],
+    'MR33-5': [`FAR <= 10 (zone FAR ${site.zone.far} is ${site.zone.far <= 10 ? 'lower, so moot' : 'higher'})`, high.allowed],
+    'ORD52-6-FRONT': ['not assessed', true],
+  };
+  return RULE_ORDER.map((id) => {
+    const r = RULES[id]!;
+    const [value, applies] = val[id] ?? ['', false];
+    return { id, source: r.source, article: r.article, quoteTh: r.quoteTh, text: r.text, kind: r.kind, value, applies };
+  });
+}
+
+function validate(input: unknown): EngineError | null {
+  if (!input || typeof input !== 'object') return fail('invalid-input', 'input must be an object');
+  const i = input as Partial<EngineInput>;
+  if (!TYPES.includes(i.type as BuildingType)) return fail('invalid-input', `type must be one of ${TYPES.join(', ')}`);
+  if (i.units !== undefined && i.units !== 'lonlat' && i.units !== 'm') return fail('invalid-input', "units must be 'lonlat' or 'm'");
+  if (i.zone === null || i.zone === undefined) return fail('invalid-zone', 'the plot has no zone; pick one before evaluating');
+  const z = i.zone;
+  if (typeof z !== 'object' || !isNum(z.far) || z.far <= 0 || z.far > 20) return fail('invalid-zone', 'zone FAR must be a number in (0, 20]');
+  if (!isNum(z.osrPct) || z.osrPct < 0 || z.osrPct > 100) return fail('invalid-zone', 'zone OSR must be a percentage in [0, 100]');
+  if (typeof z.code !== 'string') return fail('invalid-zone', 'zone code must be a string');
+  if (typeof i.nearStation !== 'boolean') return fail('invalid-input', 'nearStation must be true or false');
+  if (i.floorH !== undefined) {
+    const f = i.floorH;
+    if (!f || !isNum(f.ground) || !isNum(f.typical) || f.ground < 2.4 || f.ground > 10 || f.typical < 2.4 || f.typical > 10) {
+      return fail('invalid-input', 'floor heights must be numbers between 2.4 and 10 m');
+    }
+  }
+  if (i.widerRoadRelief !== undefined && typeof i.widerRoadRelief !== 'boolean') return fail('invalid-input', 'widerRoadRelief must be a boolean');
+  return null;
+}
+
+function run(input: EngineInput): EngineOutput {
+  const bad = validate(input);
+  if (bad) return bad;
+  const units = input.units ?? 'lonlat';
+  const plot = cleanPlot(input.ring, input.edges, units);
+  if ('ok' in plot) return plot;
+  const warnings: Warning[] = [...plot.warnings];
+  const chains = buildChains(plot.ring, plot.edges);
+  const partners = reliefPartners(chains, input.widerRoadRelief !== false);
+  const chainPaths = chains.map((c) => toPath(c.points));
+  const reliefRegion = chains.map((c) =>
+    partners[c.id]!.length ? or(partners[c.id]!.map((w) => bufferLine(chainPaths[w]!, chains[w]!.closed, PARAMS.reliefReach))) : null,
+  );
+  const tp = TYPE_PARAMS[input.type];
+  const site: Site = {
+    ring: plot.ring,
+    plot: [toPath(plot.ring)],
+    plotArea: plot.area,
+    chains,
+    chainPaths,
+    reliefPartners: partners,
+    reliefRegion,
+    floorH: input.floorH ? { ground: input.floorH.ground, typical: input.floorH.typical } : { ...tp.floorH },
+    type: input.type,
+    zone: { code: input.zone!.code, far: input.zone!.far, osrPct: input.zone!.osrPct },
+    nearStation: input.nearStation,
+    bufCache: new Map(),
+  };
+  if (!chains.some((c) => c.role === 'road')) {
+    warnings.push({ code: 'no-road', message: 'no edge is marked as a road: the 2x height rule has nothing to measure from and the high regime is closed (MR 33 art. 2)' });
+  }
+
+  const low = buildLow(site);
+  const high = buildHigh(site);
+  warnings.push(...low.warnings, ...high.warnings);
+  const chosen: Regime = high.env.allowed && high.env.permittedGfa > low.env.permittedGfa + 1e-6 ? 'high' : 'low';
+  const pick = chosen === 'high' ? high : low;
+
+  const checkSite: CheckSite = {
+    ring: plot.ring, chains, reliefPartners: partners, zone: site.zone, type: site.type, nearStation: site.nearStation,
+  };
+  const designs: Design[] = buildDesigns(site, chosen, pick.paths, pick.env.plates, pick.env.caps).map((d) => {
+    const { checks } = checkDesign(checkSite, d.plates);
+    return { ...d, checks, passes: checks.every((c) => c.status !== 'fail') };
+  });
+  if (pick.env.plates.length > 0 && designs.length < 2) {
+    warnings.push({ code: 'few-designs', message: `only ${designs.length} design fits this envelope` });
+  }
+  if (!highGate(site).ok && low.env.plates.length > 0) {
+    warnings.push({ code: 'far-unreachable', message: `FAR reached ${low.env.farReached.toFixed(2)} of ${site.zone.far}: ${low.env.limitedBy}` });
+  }
+
+  return {
+    ok: true,
+    frame: plot.frame,
+    plot: { ring: plot.ring, area: plot.area, perimeter: plot.ring.reduce((s, p, i) => {
+      const q = plot.ring[(i + 1) % plot.ring.length]!;
+      return s + Math.hypot(q[0] - p[0], q[1] - p[1]);
+    }, 0), edges: plot.edges },
+    chains,
+    rules: appliedRules(site, pick.env, low.env, high.env, partners),
+    regimes: { low: low.env, high: high.env, chosen },
+    designs,
+    warnings,
+  };
+}
+
+export function evaluate(input: EngineInput): EngineOutput {
+  try {
+    return run(input);
+  } catch (e) {
+    return fail('internal', `engine error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
