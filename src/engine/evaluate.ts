@@ -226,7 +226,7 @@ function run(input: EngineInput): EngineOutput {
         };
       })()
     : { ring: plot.ring, chains, reliefPartners: partners, zone: site.zone, type: site.type, nearStation: site.nearStation };
-  const designs: Design[] = buildDesigns(site, chosen, pick.paths, pick.env.plates, pick.env.caps).map((d) => {
+  const designs: Design[] = buildDesigns(site, chosen, pick.paths, pick.env.plates, pick.env.caps, warnings).map((d) => {
     const { checks } = checkDesign(checkSite, d.plates);
     return { ...d, checks, passes: checks.every((c) => c.status !== 'fail') };
   });

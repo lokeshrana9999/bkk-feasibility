@@ -10,6 +10,7 @@ import type { Polygon, XY } from './types.js';
 
 export const MM = 1000;
 const ARC = PARAMS.arcTol * MM;
+const INSET_ARC = 0.05 * MM;
 
 export function toPath(ring: XY[]): Path64 {
   return ring.map((p) => ({ x: Math.round(p[0] * MM), y: Math.round(p[1] * MM) }));
@@ -46,7 +47,15 @@ export function or(paths: Paths64[]): Paths64 {
 export function inset(paths: Paths64, d: number): Paths64 {
   if (paths.length === 0) return [];
   if (d === 0) return paths;
-  return inflatePaths(paths, -d * MM, JoinType.Miter, EndType.Polygon, 4, ARC);
+  // Shrinking needs a join only at reflex corners; a round join there is the exact erosion and
+  // varies smoothly with the geometry. (Convex corners need none, so rectangles stay exact.)
+  // The old miter limit of 4 flipped between a long spike and a squared tip on sharp corners,
+  // so a plot and its mirror image got different courtyards (nightly seed -420666221).
+  // Arc tolerance 5 cm: design insets shrink an envelope plate that already carries the legal
+  // margin, and a chord can only sit closer to the reflex corner than the exact arc, never
+  // outside the plate, so they need no 10 mm arcs (which cost 2-3x in vertices and time).
+  if (d > 0) return inflatePaths(paths, -d * MM, JoinType.Round, EndType.Polygon, 2, INSET_ARC);
+  return inflatePaths(paths, -d * MM, JoinType.Miter, EndType.Polygon, Math.SQRT2 * (1 + 1e-6), ARC);
 }
 
 /**

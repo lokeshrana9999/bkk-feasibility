@@ -1,5 +1,6 @@
 // Regression tests for the Codex adversarial review (2026-11-19). Each case is the
 // reviewer's input; the comment says what used to happen and what the law requires.
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { evaluate } from '../src/engine/index.js';
 import type { EdgeInfo, EngineInput, EngineResult, FloorPlate, XY } from '../src/engine/index.js';
@@ -204,6 +205,35 @@ describe('Codex review regressions', () => {
     const long = flank(100);
     expect(long.rules.find((x) => x.id === 'MR55-46')!.applies).toBe(false);
     expect(fails(long)).toEqual([]);
+  });
+
+  it('nightly M1/M4a (seeds -420666221, -1064604905): design insets agree for a plot and its mirror / split edge', () => {
+    // Insets used miter joins (limit 4); on sharp corners they flipped between a spike and a
+    // squared tip, so the courtyard hole was 102.5 m2 in one image and 71.9 m2 in the other.
+    const cases = JSON.parse(readFileSync(new URL('./fixtures/nightly-inset-cases.json', import.meta.url), 'utf8')) as {
+      input: EngineInput; transform: { mirror?: boolean; splitEdge?: number; t?: number };
+    }[];
+    for (const c of cases) {
+      const i = c.input;
+      let j: EngineInput;
+      if (c.transform.mirror) j = { ...i, ring: i.ring.map(([x, y]) => [-x, y] as [number, number]) };
+      else {
+        const k = c.transform.splitEdge!;
+        const a = i.ring[k]!;
+        const b = i.ring[(k + 1) % i.ring.length]!;
+        const t = c.transform.t!;
+        const m: [number, number] = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+        j = { ...i, ring: [...i.ring.slice(0, k + 1), m, ...i.ring.slice(k + 1)], edges: [...i.edges.slice(0, k + 1), i.edges[k]!, ...i.edges.slice(k + 1)] };
+      }
+      const ra = evaluate(i);
+      const rb = evaluate(j);
+      if (!ra.ok || !rb.ok) throw new Error('fixture rejected');
+      expect(rb.designs.map((d) => d.kind).sort()).toEqual(ra.designs.map((d) => d.kind).sort());
+      for (const d of ra.designs) {
+        const e = rb.designs.find((x) => x.kind === d.kind)!;
+        expect(Math.abs(d.gfa - e.gfa), `${d.kind}`).toBeLessThan(5);
+      }
+    }
   });
 
   it('#10 the checker gives the same verdict whether floors share one polygons array or not', () => {

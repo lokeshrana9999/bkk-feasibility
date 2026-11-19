@@ -229,6 +229,14 @@ function thresholds(r: EngineResult): string[] {
     if (Math.abs(d.targetGfa - d.gfa - 40) <= 1 + tol) out.add('design-last-40');
   }
   for (const c of r.chains) if (c.role === 'road' && Math.abs(c.length - 11.999) < 1e-6) out.add('frontage-12');
+  // the courtyard design exists only if, with 6 m wings, the courtyard is >= 100 m2 and the
+  // footprint within the open-space limit; near either edge it can appear or vanish
+  // (nightly seeds -420666221 and -1064604905: margins of a few hundredths of a m2)
+  for (const w of r.warnings) {
+    if (w.code !== 'courtyard-skipped' || !w.data) continue;
+    const { courtM2, minCourtM2, footM2, footLimitM2 } = w.data as Record<string, number>;
+    if (Math.abs(courtM2! - minCourtM2!) <= 1 || Math.abs(footM2! - footLimitM2!) <= 1) out.add('courtyard-edge');
+  }
   return [...out];
 }
 

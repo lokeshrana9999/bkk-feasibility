@@ -6,7 +6,7 @@ import type { Path64, Paths64 } from 'clipper2-ts';
 import { maxFootprint, type Site } from './envelope.js';
 import { and, area, dropSmall, inset, minus, openSlivers, toPath, toPolygons } from './geom.js';
 import { PARAMS, RULES, TYPE_PARAMS } from './rules.js';
-import type { Cap, Chain, Design, DesignKind, FloorPlate, Regime, XY } from './types.js';
+import type { Cap, Chain, Design, DesignKind, FloorPlate, Regime, Warning, XY } from './types.js';
 
 export interface DesignDraft extends Omit<Design, 'checks' | 'passes'> {}
 
@@ -234,7 +234,9 @@ function draft(
   };
 }
 
-export function buildDesigns(site: Site, regime: Regime, envPaths: Paths64[], envPlates: FloorPlate[], caps: Cap[]): DesignDraft[] {
+export function buildDesigns(
+  site: Site, regime: Regime, envPaths: Paths64[], envPlates: FloorPlate[], caps: Cap[], notes: Warning[] = [],
+): DesignDraft[] {
   if (envPlates.length === 0) return [];
   // target = the envelope's permitted GFA (the open-space cap, when present, is already the
   // solved GFA at which footprint and OSR agree); the footprint limit follows from it
@@ -339,6 +341,17 @@ export function buildDesigns(site: Site, regime: Regime, envPaths: Paths64[], en
       // above the ground floor, the floor below already has the courtyard cut out
       const r = stack(envPlates, target.value, (k, prev) => (prev ? and(F(k), prev) : minus(F(k), hole)), (k) => F(k) === F(k - 1));
       if (r.plates.length > 0) out.push(draft('courtyard', 'Courtyard block', regime, site, target, r, footCut));
+    } else {
+      // Say why, with the margins at the loosest wing (6 m): a plot right at one of these edges
+      // can gain or lose the courtyard design with sub-centimetre geometry changes.
+      const g6 = ground(MIN_WING);
+      const courtM2 = area(g6.hole);
+      const footM2 = area(g6.plate);
+      notes.push({
+        code: 'courtyard-skipped',
+        message: `no courtyard design: with 6 m wings the courtyard is ${courtM2.toFixed(1)} m2 (needs ${MIN_COURT}) and the footprint ${footM2.toFixed(1)} m2 (open-space limit ${footLimit.toFixed(1)} m2)`,
+        data: { courtM2, minCourtM2: MIN_COURT, footM2, footLimitM2: footLimit },
+      });
     }
   }
   return out;

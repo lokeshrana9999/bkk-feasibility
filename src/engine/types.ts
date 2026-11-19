@@ -163,6 +163,8 @@ export interface AppliedRule {
 export interface Warning {
   code: string;
   message: string;
+  /** Machine-readable figures behind the message, when there are any. */
+  data?: Record<string, number>;
 }
 
 export interface EngineResult {
