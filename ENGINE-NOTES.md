@@ -93,3 +93,16 @@ Built from `fv-architecture.md` (side-session notes). Run locally: `powershell -
 | Containment | `test/containment.test.ts`, `test/canonical.test.ts` | #9 and #11 |
 
 Oracle disagreements are logged in `oracle/DISAGREEMENTS.md` (12 rows). The three where the engine was laxer than a clear reading are fixed, and `test/oracle-diff.test.ts` no longer allows them: **D3** the office / hotel road exceptions need a touching road of at least 16 / 12 m with at least 16 / 12 m of frontage (zoning art. 36(2)-(3)); **D6/D7** wider-road relief is granted only when the plot is at most 60 m along the narrower road (corner, art. 46) or along the wider road (two roads, art. 45; both directions for roads that do not meet), so every building on it meets the law's 60 m building condition (stricter where a shorter building on a longer plot would qualify). Deliberate tolerances remain: D1 (0.5 m frontage gap), D2 (1 mm frontage length). The other rows are legal ambiguities, open for a Thai practitioner.
+
+### Nightly findings (1,000 runs per property, 2026-11-19/20)
+
+Each fixed with a regression case (`test/regressions.test.ts`, `test/fixtures/nightly-inset-cases.json`):
+
+| Finding | Cause | Fix |
+|---|---|---|
+| A 0.97 m neck survived the 1.5 m sliver opening in one mirror image | dilation miter limit 4 grew 3 m spikes from eroded cusps | miter limit just above sqrt(2) (right angles stay exact) |
+| Courtyard design present in one image, absent in its mirror / after an edge split | design insets used miter limit 4: spike vs squared tip on sharp corners | round joins when shrinking (exact erosion; convex corners need none), 5 cm arcs for design insets |
+| Relief granted although a corner building ran 61.7 m along the narrow road; checker refused relief on a densified outline | 60 m extent measured along the road's longest segment (a sawtooth tooth on the true outline) | extent measured along the road's end-to-end direction |
+| Envelope GFA differs between images by a few m2 to 22 m2 | a part exactly at the 1.5 m opening / 1.5 m thickness / 40 m2 line kept in one image, dropped in the other (both legal) | `Envelope.sliverArea` and `droppedArea` reported; M1 allows that difference; `courtyard-skipped` warning carries its margins |
+
+After these fixes the nightly suite passes (139 tests, ~7 min); per-push CI ~40 s.
