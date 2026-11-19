@@ -120,6 +120,39 @@ describe('Codex review regressions', () => {
     expect(b.regimes.high.permittedGfa).toBeCloseTo(a.regimes.high.permittedGfa, -1);
   });
 
+  it('nightly M1 (seed -1305305052): a plot and its mirror differ only by the reported sliver opening', () => {
+    // 8 m wide plot; a strip narrows slowly through 1.5 m along near-tangent arcs, so the
+    // floor-1 sliver opening cuts at a slightly different place in the mirror image.
+    const base: EngineInput = {
+      ...B,
+      ring: [[0, 0], [8, 0], [8, 10], [8, 27.984500000000004], [0, 27.984500000000004], [0, 10]],
+      edges: [P, { role: 'canal', width: 4, source: 'user' }, P, road(8, { gap: 0 }), road(8, { gap: 0 }), road(3, { gap: 0.5 })],
+      zone: { code: 'Y9', far: 6, osrPct: 4.5 },
+    };
+    const a = ok(base);
+    const b = ok({ ...base, ring: base.ring.map(([x, y]) => [-x, y] as [number, number]) });
+    const la = a.regimes.low;
+    const lb = b.regimes.low;
+    expect(la.floors).toBe(lb.floors);
+    const slack = Math.abs(la.sliverArea - lb.sliverArea) * la.floors;
+    expect(Math.abs(la.gfa - lb.gfa)).toBeLessThanOrEqual(slack + 0.05);
+    expect(fails(a)).toEqual([]);
+    expect(fails(b)).toEqual([]);
+  });
+
+  it('nightly M1 (seed -134161514): the sliver opening cuts a 0.97 m neck in both mirror images', () => {
+    // two-tooth comb; the right tooth joins the body through a 0.97 m neck between two round
+    // setback caps. With a miter limit of 4 the dilation re-joined it in one image only.
+    const ring: [number, number][] = [[0, 0], [20.014297880739193, 0], [20.014297880739193, 10], [20.014297880739193, 24.07012489363602], [12.014297880739178, 24.07012489363602], [12.014297880739178, 10], [8, 10], [8, 24.07012489363602], [0, 24.07012489363602], [0, 10]];
+    const edges = [road(3, { gap: 0 }), P, road(5, { gap: 0.5 }), P, P, road(4, { gap: 0 }), P, P, P, P];
+    const a = ok({ ring, edges, zone: { code: 'Y9', far: 6, osrPct: 4.5 } });
+    const b = ok({ ring: ring.map(([x, y]) => [-x, y] as [number, number]), edges, zone: { code: 'Y9', far: 6, osrPct: 4.5 } });
+    expect(a.regimes.low.plates[0]!.polygons.length).toBe(b.regimes.low.plates[0]!.polygons.length);
+    expect(Math.abs(a.regimes.low.gfa - b.regimes.low.gfa)).toBeLessThan(0.5);
+    expect(fails(a)).toEqual([]);
+    expect(fails(b)).toEqual([]);
+  });
+
   it('#10 the checker gives the same verdict whether floors share one polygons array or not', () => {
     const r = ok({ edges: [road(30), P, P, road(1)] });
     const chains = buildChains(r.plot.ring, r.plot.edges);

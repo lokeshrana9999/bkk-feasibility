@@ -57,9 +57,14 @@ export function inset(paths: Paths64, d: number): Paths64 {
 export function openSlivers(paths: Paths64, w: number): Paths64 {
   if (paths.length === 0) return [];
   const r = w / 2;
-  const eroded = inflatePaths(paths, -r * MM, JoinType.Miter, EndType.Polygon, 4, ARC);
+  // Miter limit just above sqrt(2): right and obtuse corners stay exact (a 90 degree miter is
+  // sqrt(2) x r), sharper tips are squared off at ~1.06 r. With the old limit of 4, the cusp
+  // tips of an eroded neck grew 3 m spikes on dilation and re-joined necks narrower than w
+  // (nightly M1, seed -134161514: a 0.97 m neck between two round caps survived).
+  const ML = Math.SQRT2 * (1 + 1e-6);
+  const eroded = inflatePaths(paths, -r * MM, JoinType.Miter, EndType.Polygon, ML, ARC);
   if (eroded.length === 0) return [];
-  const dilated = inflatePaths(eroded, r * MM, JoinType.Miter, EndType.Polygon, 4, ARC);
+  const dilated = inflatePaths(eroded, r * MM, JoinType.Miter, EndType.Polygon, ML, ARC);
   return and(dilated, paths);
 }
 

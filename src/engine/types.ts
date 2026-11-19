@@ -108,6 +108,12 @@ export interface Envelope {
   footprint: number;
   openSpace: number;
   stopReason: string;
+  /**
+   * Area (m2) the 1.5 m sliver opening removed from the first floor (upper floors inherit it).
+   * Near a strip that narrows slowly through 1.5 m this is sensitive to sub-centimetre
+   * geometry, eg a mirror image places arc chords differently; both results are legal.
+   */
+  sliverArea: number;
 }
 
 export type CheckStatus = 'pass' | 'fail' | 'not-assessed';
