@@ -5,7 +5,8 @@
 import type { EngineResult } from '../engine/types';
 import type { UiEdge } from './state';
 
-const fmtNum = (s: string) => {
+const fmtNum = (raw: string) => {
+  const s = raw.replace(/,/g, '');
   const v = Number(s);
   if (!Number.isFinite(v)) return s;
   const d = s.includes('.') ? Math.min(2, s.split('.')[1]!.length) : 0;
@@ -37,7 +38,7 @@ export function makeTidy(r: EngineResult | null, edges: UiEdge[]): Tidy {
         return c ? ` on ${edgeList(c.edges)}` : m;
       });
     }
-    out = out.replace(/(\d+(?:\.\d+)?)\s?m2\b/g, (_, v: string) => `${fmtNum(v)} m²`);
+    out = out.replace(/(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s?m2\b/g, (_, v: string) => `${fmtNum(v)} m²`);
     out = out.replace(/\b(\d{5,})\b/g, (v) => fmtNum(v));
     return out;
   };

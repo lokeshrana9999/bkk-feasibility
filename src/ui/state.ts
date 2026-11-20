@@ -83,6 +83,11 @@ export const DEMOS: Demo[] = [
   { id: 'soi36-l', label: 'L-shape, Sukhumvit 36', ring: shapeOn(...S36, [[0, 0], [1, 0], [1, 0.45], [0.5, 0.45], [0.5, 1], [0, 1]]) },
   { id: 'soi40-odd', label: 'Irregular, Sukhumvit 40', ring: shapeOn(...S40, [[0, 0], [1, 0], [1.1, 0.55], [0.75, 1.05], [0.05, 0.9]]) },
   { id: 'soi38-small', label: 'Narrow lot, Sukhumvit 38 (15 x 45 m)', ring: shapeOn(...S38, [[0.3, 0], [0.675, 0], [0.675, 1], [0.3, 1]]) },
+  {
+    id: 'corner36',
+    label: 'Corner, Sukhumvit 36 x Soi Naphasap 2',
+    ring: [[100.5763056, 13.7220546], [100.5766754, 13.7220546], [100.5766754, 13.7224162], [100.5763056, 13.7224162]],
+  },
 ];
 
 /**

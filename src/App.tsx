@@ -6,7 +6,7 @@ import {
   loadAreas, loadBuildings, loadRow, loadZonesAll, loadZonesY9, type Area, type Building, type RowFeature, type ZonePoly,
 } from './site/data';
 import { areaM2, bboxHit, bboxOf, centroidLL, makeFrame, pointInRing, selfIntersects, toXY, type LL } from './site/geo';
-import { detectEdges, type DetectedEdge } from './site/roads';
+import type { DetectedEdge } from './site/roads';
 import { preparePlot } from './site/prep';
 import { zoneState } from './site/zone';
 import { EngineClient } from './worker/client';
@@ -189,7 +189,7 @@ export default function App() {
   const plotRows = useMemo(() => (plotArea && rowsFor === plotArea.id ? rows : NONE), [plotArea, rowsFor, rows]);
   const prep = useMemo(() => (ring && ringOk && zoneHit && rowsReady ? preparePlot(ring, plotRows) : null), [ring, ringOk, zoneHit, rowsReady, plotRows]);
   const eRing = prep && prep.ring.length >= 3 ? prep.ring : null;
-  const detected = useMemo(() => (eRing ? detectEdges(eRing, plotRows) : []), [eRing, plotRows]);
+  const detected = useMemo(() => (eRing && prep ? prep.edges : []), [eRing, prep]);
 
   // edge edits belong to one plot's edges: a new plot or a different corner count starts fresh
   // (or from the share link that brought the plot)

@@ -121,6 +121,7 @@ export function Panel(p: Props) {
               <Fact k="Zone" v="looking up…" />
             ) : null}
             <button className="link" onClick={p.onFit}>Zoom to plot</button>
+            <CopyLink />
           </div>
         )}
         {p.status === 'invalid' && <div className="banner err">The outline crosses itself. Drag a corner to untangle it.</div>}
@@ -214,6 +215,26 @@ function Section({ title, aside, children }: { title: string; aside?: string; ch
       <div className="sec-h"><h2>{title}</h2>{aside && <span className="aside">{aside}</span>}</div>
       {children}
     </section>
+  );
+}
+
+/** Copies the share link (plot, type, edge edits and options are all in the URL). */
+function CopyLink() {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      className="link"
+      title="The link carries the plot, building type, edge edits and options"
+      onClick={() => {
+        const ok = () => {
+          setDone(true);
+          setTimeout(() => setDone(false), 1600);
+        };
+        navigator.clipboard?.writeText(location.href).then(ok, () => window.prompt('Copy this link:', location.href));
+      }}
+    >
+      {done ? 'Link copied' : 'Copy share link'}
+    </button>
   );
 }
 
@@ -314,7 +335,9 @@ function PrepNotes({ prep, status }: { prep: Prepared; status: PlotStatus }) {
   else if (prep.removed > 0.5) notes.push(<>{fmt(prep.removed)} m² of the drawn plot lies on the public right-of-way (road or canal) and is not counted: it cannot be built on. The road edges are taken from where the plot meets it.</>);
   if (prep.dropped > 0.5) notes.push(<>The right-of-way cuts the plot in pieces; the largest is used ({fmt(prep.dropped)} m² on the other side is left out).</>);
   if (prep.interiorRow) notes.push(<>A public way runs inside the plot; it is ignored here (the plot is treated as one piece around it).</>);
-  for (const s of prep.snaps) notes.push(<>Edge {s.edge + 1} was {fmt(s.by, 1)} m short of the {s.label ?? 'road'} right-of-way and is snapped onto it (a drawing gap that small is taken as touching the road).</>);
+  const byRoad = new Map<string, number>();
+  for (const s of prep.snaps) byRoad.set(s.label ?? 'road', Math.max(byRoad.get(s.label ?? 'road') ?? 0, s.by));
+  for (const [road, by] of byRoad) notes.push(<>The plot was drawn up to {fmt(by, 1)} m short of the {road} right-of-way and is snapped onto it (a drawing gap under 1.5 m is taken as touching the road; edges marked “snapped”).</>);
   if (prep.merged > 0) notes.push(<>{prep.merged} repeated or in-line corner{prep.merged > 1 ? 's' : ''} merged.</>);
   if (!notes.length) return null;
   return <>{notes.map((n, i) => <div key={i} className="banner note">{n}</div>)}</>;
@@ -326,14 +349,29 @@ const ROLES: { id: EdgeRole; label: string }[] = [
   { id: 'private', label: 'Neighbour' },
 ];
 
-/** Is final edge i (lon/lat a-b) the edge that was snapped (same line within 0.5 m)? */
+/**
+ * Total snap of a final edge (lon/lat a-b): the snapped segments it lies along (its midpoint
+ * within 0.6 m of the segment, directions within ~10 degrees). Several passes can add up.
+ */
 function snappedBy(prep: Prepared | null, a: LL, b: LL): number | null {
   if (!prep) return null;
+  const kx = 108000;
+  const ky = 110600;
+  const m = [((a[0] + b[0]) / 2) * kx, ((a[1] + b[1]) / 2) * ky];
+  const d = [(b[0] - a[0]) * kx, (b[1] - a[1]) * ky];
+  const dl = Math.hypot(d[0]!, d[1]!) || 1;
+  let total = 0;
   for (const s of prep.snaps) {
-    const near = (p: LL, q: LL) => Math.hypot((p[0] - q[0]) * 108000, (p[1] - q[1]) * 110600) < 0.6;
-    if ((near(a, s.seg[0]) || near(b, s.seg[1])) || (near(a, s.seg[1]) || near(b, s.seg[0]))) return s.by;
+    const p = [s.seg[0][0] * kx, s.seg[0][1] * ky];
+    const q = [s.seg[1][0] * kx, s.seg[1][1] * ky];
+    const v = [q[0]! - p[0]!, q[1]! - p[1]!];
+    const L = Math.hypot(v[0]!, v[1]!) || 1;
+    const t = Math.max(0, Math.min(1, ((m[0]! - p[0]!) * v[0]! + (m[1]! - p[1]!) * v[1]!) / (L * L)));
+    const dist = Math.hypot(m[0]! - (p[0]! + v[0]! * t), m[1]! - (p[1]! + v[1]! * t));
+    const cos = Math.abs((d[0]! * v[0]! + d[1]! * v[1]!) / (dl * L));
+    if (dist < 0.6 && cos > 0.985) total += s.by;
   }
-  return null;
+  return total > 0 ? total : null;
 }
 
 function EdgeTable({ edges, prep, setOverride, hover, setHover }: { edges: UiEdge[]; prep: Prepared | null; setOverride: Props['setOverride']; hover: number | null; setHover: (i: number | null) => void }) {
