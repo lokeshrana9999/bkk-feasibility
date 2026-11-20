@@ -40,8 +40,14 @@ if (-not $SkipTests) {
 if ($DryRun) { Write-Host "`nDry run: checks passed, nothing deployed." -ForegroundColor Green; exit 0 }
 
 Step 'vercel deploy --prod'
-vercel deploy --prod --yes
-if ($LASTEXITCODE -ne 0) { Fail 'vercel deploy failed (see above)' }
+# "fetch failed" is usually a dropped connection during upload: retry (uploads are deduplicated)
+$ok = $false
+for ($try = 1; $try -le 3 -and -not $ok; $try++) {
+  if ($try -gt 1) { Write-Host "retry $try of 3 in 10 s..." -ForegroundColor Yellow; Start-Sleep -Seconds 10 }
+  vercel deploy --prod --yes
+  $ok = ($LASTEXITCODE -eq 0)
+}
+if (-not $ok) { Fail 'vercel deploy failed 3 times (see above). Check the network or VPN, then run: vercel deploy --prod --debug' }
 
 Step "smoke test $ProdUrl/mcp"
 node scripts/mcp-smoke.mjs "$ProdUrl/mcp"
