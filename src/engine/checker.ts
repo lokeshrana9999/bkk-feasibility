@@ -300,8 +300,19 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
       ok ? 'pass' : 'fail',
     ));
   }
+  // ord. art. 52 (6)-(7): commercial / public buildings (office, hotel: the non-dwellings here)
+  const comPub = !dwelling;
   if (ms.floors > 3) {
     checks.push(row('front-open', 'ORD52-6-FRONT', '12 m front open space (over 3 storeys)', '12 m wide, 1/6 of perimeter', 'site layout not modelled', 'not-assessed', 'depends on the site plan; art. 53 may waive it'));
+  } else if (comPub || ms.floors > 2 || ms.height > 8) {
+    // para. 1 exempts dwellings of up to 3 storeys not on a public way: shown unless no road abuts
+    const onRoad = site.chains.some((c) => c.role === 'road' && c.gap <= PARAMS.frontageGapTol);
+    if (comPub || onRoad) {
+      checks.push(row('front-open-6', 'ORD52-6-FRONT6', '6 m front open space (up to 3 storeys)', '6 m wide, 1/6 of perimeter', 'site layout not modelled', 'not-assessed', 'depends on the site plan; art. 53 may waive it'));
+    }
+  }
+  if (comPub) {
+    checks.push(row('rear-walk', 'ORD52-7-REAR', 'Uncovered rear walkway (commercial / public building)', '>= 2 m wide, uncovered', 'site layout not modelled', 'not-assessed', 'which side is the rear depends on the site plan'));
   }
   // every row cites a rule that exists
   for (const c of checks) if (c.rule !== 'ENVELOPE' && !RULES[c.rule]) throw new Error(`unknown rule ${c.rule}`);

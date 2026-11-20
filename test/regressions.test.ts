@@ -210,6 +210,24 @@ describe('Codex review regressions', () => {
     expect(checkDesign(site, plates([[-15, -5], [15, -5], [15, 20], [-15, 20]])).checks.find((c) => c.id === 'road-0')!.status).toBe('pass');
   });
 
+  it('D11 the checker lists ord. 52(6) para. 1 (6 m front space, up to 3 storeys) and 52(7) (rear walkway) as not assessed', () => {
+    // was: no row at all, so a 3-storey office passed without either being flagged
+    const ring = B.ring.map((p) => [p[0] - 25, p[1] - 20] as XY);
+    const site = (type: 'office' | 'hotel' | 'condo') => ({ ring, chains: buildChains(ring, [road(12), P, P, P]), reliefPartners: [[], [], [], []], zone: B.zone!, type, nearStation: false });
+    const rect: XY[] = [[-20, -15], [20, -15], [20, 15], [-20, 15]];
+    const stack = (n: number): FloorPlate[] => Array.from({ length: n }, (_, i) => ({ level: i + 1, z0: 4 * i, z1: 4 * (i + 1), polygons: [[rect]], area: 1200, dByChain: [] }));
+    const st = (type: 'office' | 'hotel' | 'condo', n: number, id: string) => checkDesign(site(type), stack(n)).checks.find((c) => c.id === id)?.status;
+    for (const type of ['office', 'hotel'] as const) {
+      expect(st(type, 3, 'front-open-6')).toBe('not-assessed');
+      expect(st(type, 3, 'rear-walk')).toBe('not-assessed');
+      expect(st(type, 5, 'front-open')).toBe('not-assessed'); // over 3 storeys: the 12 m row instead
+      expect(st(type, 5, 'front-open-6')).toBeUndefined();
+    }
+    expect(st('condo', 3, 'front-open-6')).toBe('not-assessed'); // 3 storeys on a public road
+    expect(st('condo', 2, 'front-open-6')).toBeUndefined(); // 2 storeys, 8 m: not covered
+    expect(st('condo', 3, 'rear-walk')).toBeUndefined(); // not commercial or public
+  });
+
   it('#7 a high OSR no longer wipes out the high regime: footprint and GFA are solved together', () => {
     // was: high permitted 0 m2, low chosen. A legal 10,868 m2 tower exists (13 x 836 m2).
     const r = ok({ zone: { code: 'Y9', far: 20, osrPct: 10 } });

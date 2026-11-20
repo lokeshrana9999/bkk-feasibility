@@ -130,6 +130,16 @@ const rows: RuleDef[] = [
     quoteTh: 'อาคารตามวรรคหนึ่งถ้าสูงเกิน 3 ชั้น ให้มีที่ว่างกว้างไม่น้อยกว่า 12 เมตร ... ต้องมีพื้นที่ต่อเนื่องกันยาวไม่น้อยกว่า 1 ใน 6 ของความยาวเส้นรอบรูปภายนอกอาคาร',
     text: 'Buildings over 3 storeys need a 12 m front open space along 1/6 of the perimeter, linked by a 6 m internal road (waived under art. 53). Not assessed: depends on site layout.',
   },
+  {
+    id: 'ORD52-6-FRONT6', source: ORD, article: 'arts. 52 (6) para. 1, 53', kind: 'not-assessed',
+    quoteTh: 'อาคารพาณิชย์ โรงงานอุตสาหกรรม คลังสินค้า อาคารสาธารณะ อาคารสูงเกิน 2 ชั้น หรือสูงเกิน 8 เมตร ยกเว้นอาคารอยู่อาศัยสูงไม่เกิน 3 ชั้น ที่ไม่อยู่ริมทางสาธารณะ ให้มีที่ว่างด้านหน้ากว้างไม่น้อยกว่า 6 เมตร',
+    text: 'Commercial and public buildings (offices, hotels) and buildings over 2 storeys or 8 m, up to 3 storeys, need a 6 m front open space along 1/6 of the perimeter (dwellings of up to 3 storeys not on a public way are exempt; art. 53 may waive it). Not assessed: depends on site layout.',
+  },
+  {
+    id: 'ORD52-7-REAR', source: ORD, article: 'art. 52 (7)', kind: 'not-assessed',
+    quoteTh: 'อาคารพาณิชย์ โรงงานอุตสาหกรรม และอาคารสาธารณะ จะต้องมีที่ว่างโดยปราศจากสิ่งปกคลุมเป็นทางเดินหลังอาคารได้ถึงกัน กว้างไม่น้อยกว่า 2 เมตร',
+    text: 'Commercial and public buildings (offices, hotels) need an uncovered rear walkway at least 2 m wide. Not assessed: which side is the rear depends on site layout.',
+  },
 ];
 
 export const RULES: Readonly<Record<string, RuleDef>> = Object.freeze(

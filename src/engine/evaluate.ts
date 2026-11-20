@@ -137,6 +137,8 @@ function appliedRules(site: Site, chosen: Envelope, low: Envelope, high: Envelop
     'MR33-4': ['high regime: 6 m from every road and private edge, all floors', high.allowed],
     'MR33-5': [`FAR <= 10 (zone FAR ${site.zone.far} is ${site.zone.far <= 10 ? 'lower, so moot' : 'higher'})`, high.allowed],
     'ORD52-6-FRONT': ['not assessed', true],
+    'ORD52-6-FRONT6': ['not assessed (buildings up to 3 storeys)', true],
+    'ORD52-7-REAR': [tp.dwelling ? 'not a commercial or public building' : 'not assessed', !tp.dwelling],
   };
   return RULE_ORDER.map((id) => {
     const r = RULES[id]!;
