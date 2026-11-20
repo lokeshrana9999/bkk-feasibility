@@ -45,6 +45,7 @@ export default function App() {
   const [viewArea, setViewArea] = useState<Area | null>(null);
   const [rows, setRows] = useState<RowFeature[]>([]);
   const [rowsFor, setRowsFor] = useState<number | null>(null);
+  const [bldFor, setBldFor] = useState<number | null>(null);
   const [rowFc, setRowFc] = useState<unknown>(null);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [outside, setOutside] = useState<ZoneHit | null>(null);
@@ -143,7 +144,11 @@ export default function App() {
         features: r.map((f) => ({ type: 'Feature', id: f.id, properties: { kind: f.kind, name: f.name }, geometry: { type: 'MultiPolygon', coordinates: f.polys } })),
       });
     });
-    loadBuildings(activeArea).then((b) => live && setBuildings(b));
+    loadBuildings(activeArea).then((b) => {
+      if (!live) return;
+      setBuildings(b);
+      setBldFor(activeArea.id);
+    });
     return () => {
       live = false;
     };
@@ -270,6 +275,9 @@ export default function App() {
             fitPending.current = true;
           }}
         />
+        {activeArea && (rowsFor !== activeArea.id || bldFor !== activeArea.id) && (
+          <div className="map-status">Loading roads and buildings for {activeArea.labelLatin}…</div>
+        )}
         {drawing && <div className="map-hint">Click to place corners. Click the first corner to close the plot.</div>}
         {!drawing && !ring && mapReady && (
           <div className="map-hint">No plot. Press <b>Draw plot</b> in the panel, or pick a demo.</div>
