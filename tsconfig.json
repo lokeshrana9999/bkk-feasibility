@@ -14,5 +14,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src", "test", "scripts", "vitest.config.ts"]
+  "include": ["src", "test", "scripts", "vitest.config.ts"],
+  "exclude": ["src/site", "src/scene", "src/ui", "src/worker", "src/main.tsx", "src/App.tsx"]
 }

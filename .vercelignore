@@ -1,0 +1,12 @@
+sources
+scratch
+oracle
+test
+pipeline
+node_modules
+dist
+*.pdf
+*.npy
+.env
+.env.*
+.claude
