@@ -98,17 +98,28 @@ export async function loadZonesY9(): Promise<{ zones: ZonePoly[]; fc: FC | null 
 
 let allZones: Promise<ZonePoly[]> | null = null;
 /** All 600+ zones of the city plan (simplified), loaded on first need for the outside-ย.9 panel. */
-export function loadZonesAll(): Promise<ZonePoly[]> {
-  allZones ??= getJson<FC>(`${BASE}zones_all.json`).then((fc) => toZones(fc, false).filter((z) => !z.zone.startsWith('ย.๙')));
+export function loadZonesAll(): Promise<ZonePoly[] | null> {
+  allZones ??= getJson<FC>(`${BASE}zones_all.json`).then((fc) => {
+    if (!fc) {
+      allZones = null;
+      return null;
+    }
+    return toZones(fc, false).filter((z) => !z.zone.startsWith('ย.๙'));
+  }) as Promise<ZonePoly[]>;
   return allZones;
 }
 
-const rowCache = new Map<number, Promise<RowFeature[]>>();
-export function loadRow(area: Area): Promise<RowFeature[]> {
+const rowCache = new Map<number, Promise<RowFeature[] | null>>();
+/** Right-of-way polygons of an area; null when the file could not be fetched (retry later). */
+export function loadRow(area: Area): Promise<RowFeature[] | null> {
   let p = rowCache.get(area.id);
   if (!p) {
-    p = getJson<FC>(`${BASE}${area.files.row ?? `row/${area.id}.json`}`).then((fc) =>
-      (fc?.features ?? []).map((f) => {
+    p = getJson<FC>(`${BASE}${area.files.row ?? `row/${area.id}.json`}`).then((fc) => {
+      if (!fc) {
+        rowCache.delete(area.id);
+        return null;
+      }
+      return (fc.features ?? []).map((f) => {
         const polys = polysOf(f.geometry);
         const k = String(f.properties.kind ?? 'road');
         return {
@@ -118,8 +129,8 @@ export function loadRow(area: Area): Promise<RowFeature[]> {
           polys,
           bbox: bboxOf(polys.flatMap((q) => q[0]!)),
         };
-      }),
-    );
+      });
+    });
     rowCache.set(area.id, p);
   }
   return p;
@@ -203,12 +214,16 @@ function decodeChunk(c: BuildingChunk): Building[] {
   return out;
 }
 
-const bldCache = new Map<number, Promise<Building[]>>();
-export function loadBuildings(area: Area): Promise<Building[]> {
+const bldCache = new Map<number, Promise<Building[] | null>>();
+/** Neighbour buildings of an area; null when the file could not be fetched (retry later). */
+export function loadBuildings(area: Area): Promise<Building[] | null> {
   let p = bldCache.get(area.id);
   if (!p) {
     p = getJson<BuildingChunk | FC>(`${BASE}${area.files.buildings ?? `buildings/${area.id}.json`}`).then((j) => {
-      if (!j) return [];
+      if (!j) {
+        bldCache.delete(area.id);
+        return null;
+      }
       if ('r' in j && Array.isArray(j.r)) return decodeChunk(j);
       if ('features' in j && Array.isArray(j.features)) return toBuildings(j);
       return [];

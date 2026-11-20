@@ -21,7 +21,10 @@ export const hashOf = (ring: LL[], type = 'condo') =>
 
 // Spots found by e2e/tools/find-spot.ts: inside ย.9-23 (FAR 7, OSR 4.5%), no right-of-way within 3 m
 // of a 50 x 40 m rectangle at the origin.
-export const EMPTY_Y923: LL = [100.5775848, 13.7171633];
+// (The first spot, 100.5775848 13.7171633, has a soi through its interior: once the app cut the
+// right-of-way out of plots (F01) it stopped being a clean 2,000 m2 plot. find-spot now checks the
+// interior too.)
+export const EMPTY_Y923: LL = [100.5809427, 13.7136105];
 export const EMPTY_Y923_B: LL = [100.5748612, 13.7198373];
 
 // ---- console / network watch

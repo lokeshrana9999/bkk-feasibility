@@ -85,30 +85,129 @@ export const DEMOS: Demo[] = [
   { id: 'soi38-small', label: 'Narrow lot, Sukhumvit 38 (15 x 45 m)', ring: shapeOn(...S38, [[0.3, 0], [0.675, 0], [0.675, 1], [0.3, 1]]) },
 ];
 
+/**
+ * Everything needed to reproduce a result, in the URL hash:
+ *   p  = lon,lat;lon,lat;...   drawn outline
+ *   t  = condo | apartment | office | hotel
+ *   e  = 0:r20,2:c8g1.5,3:p    edge edits: index, role (r road, c canal, p neighbour), width, gap
+ *   s  = 1                      within 500 m of a station
+ *   rl = 0                      wider-road relief off
+ *   fh = 4.5x3.2                floor-to-floor heights, ground x typical
+ */
 export interface HashState {
   ring?: LL[];
   type?: BuildingType;
+  edges?: Record<number, EdgeOverride>;
+  station?: boolean;
+  relief?: boolean;
+  floorH?: { ground: number; typical: number };
+  /** Parts of the hash that were present but could not be read. */
+  bad: string[];
 }
 
-export function readHash(): HashState {
-  const h = new URLSearchParams(window.location.hash.slice(1));
-  const out: HashState = {};
+const ROLE_CODE: Record<EdgeRole, string> = { road: 'r', canal: 'c', private: 'p' };
+const CODE_ROLE: Record<string, EdgeRole> = { r: 'road', c: 'canal', p: 'private' };
+
+export function readHash(hash = window.location.hash): HashState {
+  const h = new URLSearchParams(hash.replace(/^#/, ''));
+  const out: HashState = { bad: [] };
   const p = h.get('p');
-  if (p) {
+  if (p !== null) {
     const ring = p.split(';').map((s) => s.split(',').map(Number) as LL);
-    if (ring.length >= 3 && ring.every((q) => q.length === 2 && q.every(Number.isFinite) && Math.abs(q[0]) <= 180 && Math.abs(q[1]) <= 90)) out.ring = ring;
+    if (ring.length >= 3 && ring.length <= 2000 && ring.every((q) => q.length === 2 && q.every(Number.isFinite) && Math.abs(q[0]) <= 180 && Math.abs(q[1]) <= 90)) out.ring = ring;
+    else out.bad.push('plot outline');
   }
   const t = h.get('t');
-  if (t && TYPES.some((x) => x.id === t)) out.type = t as BuildingType;
+  if (t !== null) {
+    if (TYPES.some((x) => x.id === t)) out.type = t as BuildingType;
+    else out.bad.push('building type');
+  }
+  const e = h.get('e');
+  if (e !== null && e !== '') {
+    const edges: Record<number, EdgeOverride> = {};
+    let ok = true;
+    for (const part of e.split(',')) {
+      const m = part.match(/^(\d{1,3}):([rcp])(\d+(?:\.\d+)?)?(?:g(\d+(?:\.\d+)?))?$/);
+      if (!m) {
+        ok = false;
+        continue;
+      }
+      const role = CODE_ROLE[m[2]!]!;
+      const o: EdgeOverride = { role };
+      if (m[3] !== undefined) {
+        const w = Number(m[3]);
+        if (w >= 1 && w <= 100 && role !== 'private') o.width = w;
+        else ok = false;
+      }
+      if (m[4] !== undefined) {
+        const g = Number(m[4]);
+        if (g >= 0 && g <= 50 && role !== 'private') o.gap = g;
+        else ok = false;
+      }
+      edges[Number(m[1])] = o;
+    }
+    out.edges = edges;
+    if (!ok) out.bad.push('edge edits');
+  }
+  const s = h.get('s');
+  if (s !== null) {
+    if (s === '1' || s === '0') out.station = s === '1';
+    else out.bad.push('station flag');
+  }
+  const rl = h.get('rl');
+  if (rl !== null) {
+    if (rl === '1' || rl === '0') out.relief = rl === '1';
+    else out.bad.push('relief flag');
+  }
+  const fh = h.get('fh');
+  if (fh !== null) {
+    const m = fh.match(/^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$/);
+    const g = m ? Number(m[1]) : NaN;
+    const ty = m ? Number(m[2]) : NaN;
+    if (g >= 2.4 && g <= 10 && ty >= 2.4 && ty <= 10) out.floorH = { ground: g, typical: ty };
+    else out.bad.push('floor heights');
+  }
   return out;
 }
 
-export function writeHash(ring: LL[] | null, type: BuildingType) {
-  const h = new URLSearchParams();
-  if (ring) h.set('p', ring.map((q) => `${q[0].toFixed(7)},${q[1].toFixed(7)}`).join(';'));
-  h.set('t', type);
-  const s = `#${h.toString().replace(/%2C/g, ',').replace(/%3B/g, ';')}`;
-  if (s !== window.location.hash) history.replaceState(null, '', s);
+export interface ShareState {
+  ring: LL[] | null;
+  type: BuildingType;
+  edges: Record<number, EdgeOverride>;
+  station: boolean;
+  relief: boolean;
+  floorH: { ground: number; typical: number } | null;
+}
+
+export function hashOf(st: ShareState): string {
+  const parts: string[] = [];
+  if (st.ring) parts.push(`p=${st.ring.map((q) => `${q[0].toFixed(7)},${q[1].toFixed(7)}`).join(';')}`);
+  parts.push(`t=${st.type}`);
+  const e = Object.entries(st.edges)
+    .filter(([, o]) => o.role !== undefined)
+    .sort((a, b) => Number(a[0]) - Number(b[0]))
+    .map(([i, o]) => `${i}:${ROLE_CODE[o.role!]}${o.width !== undefined && o.role !== 'private' ? o.width : ''}${o.gap !== undefined && o.role !== 'private' ? `g${o.gap}` : ''}`);
+  if (e.length) parts.push(`e=${e.join(',')}`);
+  if (st.station) parts.push('s=1');
+  if (!st.relief) parts.push('rl=0');
+  if (st.floorH) parts.push(`fh=${st.floorH.ground}x${st.floorH.typical}`);
+  return `#${parts.join('&')}`;
+}
+
+let wroteOnce = false;
+/**
+ * Write the share link. The first write replaces the entry the page opened with; later writes
+ * add history entries, so Back steps through earlier plots instead of leaving the app.
+ */
+export function writeHash(st: ShareState) {
+  const s = hashOf(st);
+  if (s === window.location.hash) {
+    wroteOnce = true;
+    return;
+  }
+  if (wroteOnce) history.pushState(null, '', s);
+  else history.replaceState(null, '', s);
+  wroteOnce = true;
 }
 
 export const fmt = (v: number, d = 0) => v.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });

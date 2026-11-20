@@ -188,7 +188,7 @@ export function detectEdges(ringIn: LL[], rows: RowFeature[]): DetectedEdge[] {
         width: role === 'private' ? undefined : median(widths),
         gap: role === 'private' ? undefined : median(gaps),
         // generic names ("public way") are many different ways: key them by parcel id
-        name: generic ? `${feat.name || 'way'} #${feat.id}` : feat.name,
+        name: generic ? `${feat.name || 'way'} [${feat.id}]` : feat.name,
         label: feat.kind === 'rail' ? `railway (${roadLabel(feat.name)})` : roadLabel(feat.name),
         source: 'city',
         length: L,

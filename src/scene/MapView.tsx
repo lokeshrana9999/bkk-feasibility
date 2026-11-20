@@ -34,9 +34,14 @@ interface Props {
   zonesData: unknown | null;
   rowData: unknown | null;
   showRow: boolean;
-  onRing: (ring: LL[] | null) => void;
+  /** external: the plot was replaced (demo, link, new drawing), not edited by a drag. */
+  onRing: (ring: LL[] | null, external: boolean) => void;
   onDrawingChange: (drawing: boolean) => void;
   onReady: () => void;
+  /** The map could not start or lost its GPU context. */
+  onFailure?: (msg: string) => void;
+  /** The basemap style did not load; a plain background is used. */
+  onBasemapDown?: () => void;
   /** A plot was set from outside (demo, link): the app frames it once its roads are known. */
   onWantFit?: () => void;
 }
@@ -60,8 +65,35 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
   const cb = useRef(props);
   cb.current = props;
 
+  const lastRing = useRef<LL[] | null>(null);
+  const keyRef = useRef<((e: KeyboardEvent) => void) | null>(null);
+
+  /** Replace the plot (demo, link, Esc): ends drawing mode if it was on. */
+  function place(ring: LL[], fly: boolean) {
+    const draw = drawRef.current;
+    if (!draw) return;
+    if (draw.getMode() === 'polygon') draw.clear();
+    draw.setMode('select');
+    cb.current.onDrawingChange(false);
+    if (plotId.current !== null && draw.hasFeature(plotId.current)) draw.removeFeatures([plotId.current]);
+    const f: GeoJSONStoreFeatures = {
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: [[...ring, ring[0]!]] },
+      properties: { mode: 'polygon' },
+    };
+    const res = draw.addFeatures([f]);
+    const id = res[0]?.valid ? res[0].id : null;
+    plotId.current = id ?? null;
+    if (id !== null && id !== undefined) draw.selectFeature(id);
+    lastRing.current = ring;
+    cb.current.onRing(ring, true);
+    if (fly) cb.current.onWantFit?.();
+  }
+
   useEffect(() => {
-    const map = new maplibregl.Map({
+    let map: MLMap;
+    try {
+      map = new maplibregl.Map({
       container: div.current!,
       center: START,
       zoom: 16.4,
@@ -70,6 +102,18 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
       maxPitch: 75,
       attributionControl: false,
       canvasContextAttributes: { antialias: true },
+    });
+    } catch (e) {
+      cb.current.onFailure?.(`The 3D map could not start (${e instanceof Error ? e.message : 'WebGL unavailable'}). Try another browser, or turn on hardware acceleration.`);
+      return;
+    }
+    let removed = false;
+    const canvas = map.getCanvas();
+    canvas.addEventListener('webglcontextlost', (ev) => {
+      // map.remove() releases the context on purpose; only a loss while the map is live counts
+      if (removed) return;
+      ev.preventDefault();
+      cb.current.onFailure?.('The graphics context was lost (GPU reset or too many tabs). Reload the page to continue.');
     });
     // drop the basemap's US highway-shield layers (filters that warn on Bangkok data) and its
     // flat buildings (deck.gl draws the real ones in 3D)
@@ -88,7 +132,18 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
       'bottom-right',
     );
 
-    map.on('load', () => {
+    // start as soon as the style is parsed (not after every basemap tile, which 'load' waits for);
+    // if the basemap never comes, fall back to a plain background so the tool still works
+    let started = false;
+    const fallback = setTimeout(() => {
+      if (started) return;
+      cb.current.onBasemapDown?.();
+      map.setStyle({ version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#eef0f3' } }], glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf' });
+    }, 8000);
+    map.on('style.load', () => {
+      if (started) return;
+      started = true;
+      clearTimeout(fallback);
       map.addSource('zones', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({ id: 'zones-fill', type: 'fill', source: 'zones', paint: { 'fill-color': '#a0522d', 'fill-opacity': 0.07 } });
       map.addLayer({ id: 'zones-line', type: 'line', source: 'zones', paint: { 'line-color': '#8b4513', 'line-width': 1.4, 'line-opacity': 0.7, 'line-dasharray': [3, 2] } });
@@ -143,24 +198,36 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
       draw.setMode('select');
       drawRef.current = draw;
 
-      const emit = () => {
+      const emit = (external = false) => {
         const id = plotId.current;
         if (id === null) return;
         const f = draw.getSnapshotFeature(id);
         if (!f || f.geometry.type !== 'Polygon') return;
-        cb.current.onRing(openRing((f.geometry.coordinates as LL[][])[0]!).map((p) => [p[0], p[1]] as LL));
+        const r = openRing((f.geometry.coordinates as LL[][])[0]!).map((p) => [p[0], p[1]] as LL);
+        lastRing.current = r;
+        cb.current.onRing(r, external);
       };
+      // Esc while drawing: give up the new outline and bring the previous plot back
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key !== 'Escape' || draw.getMode() !== 'polygon') return;
+        draw.clear();
+        draw.setMode('select');
+        cb.current.onDrawingChange(false);
+        if (lastRing.current) place(lastRing.current, false);
+      };
+      window.addEventListener('keydown', onKey);
+      keyRef.current = onKey;
       let raf = 0;
       draw.on('change', (ids, type) => {
         if (draw.getMode() !== 'select' || plotId.current === null) return;
         if (type === 'delete' && ids.includes(plotId.current)) {
           plotId.current = null;
-          cb.current.onRing(null);
+          cb.current.onRing(null, true);
           return;
         }
         if (!ids.includes(plotId.current)) return;
         cancelAnimationFrame(raf);
-        raf = requestAnimationFrame(emit);
+        raf = requestAnimationFrame(() => emit(false));
       });
       draw.on('finish', (id, ctx) => {
         if (draw.getMode() === 'polygon' && ctx.action === 'draw') {
@@ -168,7 +235,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
           draw.setMode('select');
           draw.selectFeature(id);
           cb.current.onDrawingChange(false);
-          emit();
+          emit(true);
         } else if (ctx.action === 'dragFeature' || ctx.action === 'dragCoordinate') {
           emit();
         }
@@ -189,6 +256,9 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
       console.warn('map:', e.error?.message ?? e);
     });
     return () => {
+      removed = true;
+      clearTimeout(fallback);
+      if (keyRef.current) window.removeEventListener('keydown', keyRef.current);
       drawRef.current?.stop();
       map.remove();
     };
@@ -212,22 +282,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
 
   useImperativeHandle(ref, () => ({
     setPlot(ring, fly = true) {
-      const draw = drawRef.current;
-      if (!draw) return;
-      draw.setMode('select');
-      if (plotId.current !== null && draw.hasFeature(plotId.current)) draw.removeFeatures([plotId.current]);
-      const closed = [...ring, ring[0]!];
-      const f: GeoJSONStoreFeatures = {
-        type: 'Feature',
-        geometry: { type: 'Polygon', coordinates: [closed] },
-        properties: { mode: 'polygon' },
-      };
-      const res = draw.addFeatures([f]);
-      const id = res[0]?.valid ? res[0].id : null;
-      plotId.current = id ?? null;
-      if (id !== null && id !== undefined) draw.selectFeature(id);
-      cb.current.onRing(ring);
-      if (fly) cb.current.onWantFit?.();
+      place(ring, fly);
     },
     startDrawing() {
       const draw = drawRef.current;
@@ -237,7 +292,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
         draw.removeFeatures([plotId.current]);
       }
       plotId.current = null;
-      cb.current.onRing(null);
+      cb.current.onRing(null, true);
       draw.setMode('polygon');
       cb.current.onDrawingChange(true);
     },

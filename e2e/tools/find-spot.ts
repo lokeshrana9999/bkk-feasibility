@@ -4,8 +4,9 @@
 // Run: npx tsx e2e/tools/find-spot.ts
 import { readFileSync } from 'node:fs';
 import { detectEdges } from '../../src/site/roads';
+import { preparePlot } from '../../src/site/prep';
 import { lookupZone } from '../../src/site/zone';
-import { makeFrame, toLL, polysOf, bboxOf, type LL } from '../../src/site/geo';
+import { makeFrame, toLL, polysOf, bboxOf, areaM2, type LL } from '../../src/site/geo';
 import type { RowFeature, ZonePoly } from '../../src/site/data';
 
 const D = 'public/data/';
@@ -33,13 +34,22 @@ const fmt = (r: LL[]) => r.map((p) => `${p[0].toFixed(7)},${p[1].toFixed(7)}`).j
 
 const [x0, y0, x1, y1] = target.bbox as [number, number, number, number];
 let found = 0;
-for (let i = 0; i < 400 && found < 3; i++) {
+for (let i = 0; i < 6000 && found < 3; i++) {
   const c: LL = [x0 + ((i * 0.618) % 1) * (x1 - x0), y0 + ((i * 0.381) % 1) * (y1 - y0)];
+  // the spot is pasted into helpers.ts at 7 decimals and the ring rebuilt from it: do the same here
+  c[0] = Number(c[0].toFixed(7));
+  c[1] = Number(c[1].toFixed(7));
   const r = rect(c, 50, 40);
   const z = lookupZone(r, zones);
   if (!z || z.share < 1 || z.zone.far !== 7) continue;
   const e = detectEdges(r, rows);
-  if (e.every((x) => x.role === 'private')) {
+  // edges clear of any right-of-way, and none crossing the interior (F01: a soi through the plot)
+  const p = preparePlot(r, rows);
+  // the share link rounds to 7 decimals (~1 cm): keep spots where the rounded plot is 2,000.0 m2,
+  // so FAR 7 x area reads exactly 14,000
+  const q = r.map((v) => [Number(v[0].toFixed(7)), Number(v[1].toFixed(7))] as LL);
+  if (Math.abs(areaM2(q) - 2000) > 0.03) continue;
+  if (e.every((x) => x.role === 'private') && p.removed < 0.5 && p.dropped < 0.5 && !p.interiorRow) {
     found++;
     console.log(`EMPTY ${z.zone.subLatin} far ${z.zone.far} osr ${z.zone.osr}\n#p=${fmt(r)}&t=condo`);
   }

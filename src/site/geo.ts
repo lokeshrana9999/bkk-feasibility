@@ -21,7 +21,9 @@ export function makeFrame(lon0: number, lat0: number): LocalFrame {
   return { lon0, lat0, kx, ky };
 }
 
-export const toXY = (f: LocalFrame, p: LL): XY => [(p[0] - f.lon0) * f.kx, (p[1] - f.lat0) * f.ky];
+/** Longitude difference unwrapped to [-180, 180) so a plot across the 180th meridian stays small. */
+const dLon = (a: number, b: number) => ((((a - b) % 360) + 540) % 360) - 180;
+export const toXY = (f: LocalFrame, p: LL): XY => [dLon(p[0], f.lon0) * f.kx, (p[1] - f.lat0) * f.ky];
 export const toLL = (f: LocalFrame, p: XY): LL => [f.lon0 + p[0] / f.kx, f.lat0 + p[1] / f.ky];
 
 /** Drop the closing vertex if the ring repeats its first point. */

@@ -5,7 +5,8 @@
 import type { EngineInput, EngineOutput } from '../engine/types';
 import type { WorkerRequest, WorkerResponse } from './engine.worker';
 
-export type ResultHandler = (out: EngineOutput, ms: number, input: EngineInput) => void;
+/** `pending` is true when a newer input is already queued (this result is about to be replaced). */
+export type ResultHandler = (out: EngineOutput, ms: number, input: EngineInput, pending: boolean) => void;
 
 export class EngineClient {
   private worker: Worker;
@@ -24,7 +25,7 @@ export class EngineClient {
       const req = this.inFlight;
       this.busy = false;
       this.inFlight = null;
-      if (req && e.data.id === req.id) this.onResult(e.data.out, e.data.ms, req.input);
+      if (req && e.data.id === req.id) this.onResult(e.data.out, e.data.ms, req.input, this.pending !== null);
       this.flush();
     };
     w.onerror = (e) => {
