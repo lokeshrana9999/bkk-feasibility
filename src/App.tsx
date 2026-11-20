@@ -475,7 +475,7 @@ function Legend({ view, setView, hasGhost }: { view: ViewToggles; setView: (v: V
       {item('envelope', 'Allowed envelope', 'rgba(60,128,246,.35)')}
       {item('ghost', 'Other regime (outline)', 'transparent', !hasGhost)}
       {item('twoX', '2:1 road plane', 'rgba(255,104,56,.4)')}
-      {item('buildings', 'Neighbour buildings', '#c4c6ce')}
+      {item('buildings', 'Neighbour buildings (lighter: height estimated)', '#c4c6ce')}
       {item('row', 'City right-of-way', 'rgba(245,158,11,.35)')}
       <div className="lg-roles">
         <span><i style={{ background: 'rgb(234,120,32)' }} />road</span>

@@ -192,7 +192,21 @@ export function Panel(p: Props) {
         </>
       )}
       <footer className="pf">
-        Data: BMA comprehensive plan 2556 zoning; right-of-way from DOL map sheets (BMA GIS), not surveyed; buildings from OpenStreetMap, Overture and Google Open Buildings. A feasibility aid, not a permit check.
+        <details className="how">
+          <summary>How this works</summary>
+          <ol>
+            <li><b>Zone.</b> The plot is matched to the BMA comprehensive plan 2556 (all 607 zones); the zone holding most of it decides the rules. Each ย.9 polygon carries its own FAR and open-space ratio (ย.๙-๔ is FAR 6).</li>
+            <li><b>Site.</b> Roads and canals come from the public right-of-way on Department of Lands map sheets: each edge is ray-cast against them for role, width and gap. Any part of the drawn plot on the right-of-way is cut away; gaps under 1.5 m snap shut.</li>
+            <li><b>Rules.</b> Building Control Ordinance 2544, Ministerial Regulations 33 and 55 and the 2556 plan: road and boundary setbacks, the 2:1 height plane, open space, the high-rise regime (23 m / 10,000 m²) and its road gates. Each rule is cited with its Thai text (Rules tab).</li>
+            <li><b>Envelope.</b> Floor by floor, the plot minus every setback buffer, so the allowed space follows the real outline; low-rise and high-rise regimes are computed separately and the one with more floor area is shown.</li>
+            <li><b>Designs.</b> Tower-on-podium, slab and courtyard schemes are cut from inside the envelope and sized to the permitted floor area; an independent checker re-measures every design against the rules (pass / fail / not assessed).</li>
+          </ol>
+          <p>Runs entirely in the browser: no server, no AI at run time. Widths are from map sheets, not surveys; heights of neighbours partly estimated (lighter grey).</p>
+        </details>
+        <p>
+          Data: BMA city planning GIS (zoning, right-of-way); buildings © OpenStreetMap contributors, Overture Maps, Google Open Buildings (CC BY 4.0). A feasibility aid, not a permit check.
+          {' '}<a href="https://github.com/lokeshrana9999/bkk-feasibility" target="_blank" rel="noreferrer">Source code</a>
+        </p>
       </footer>
     </aside>
   );
