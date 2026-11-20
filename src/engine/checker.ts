@@ -63,7 +63,7 @@ export function measure(site: CheckSite, plates: FloorPlate[]): Measured {
  * Minimum distance from any plate boundary to a chain, and the worst 2x margin per floor.
  * Floors that share geometry with the floor below (same polygons array) reuse its distances.
  */
-function chainMeasures(site: CheckSite, c: Chain, plates: FloorPlate[], segCache: Map<unknown, [XY, XY][]>) {
+function chainMeasures(site: CheckSite, c: Chain, plates: FloorPlate[], segCache: Map<unknown, [XY, XY][]>, sampleCache: Map<unknown, XY[]>) {
   const segsOf = (p: FloorPlate) => {
     let s = segCache.get(p.polygons);
     if (!s) {
@@ -104,7 +104,12 @@ function chainMeasures(site: CheckSite, c: Chain, plates: FloorPlate[], segCache
         // samples already at or beyond the requirement (pass either way) and samples short
         // of it that are not exempt. Exemption is only looked up for samples short of it.
         dist = Infinity;
-        for (const q of samplePoints(segs, 0.25)) {
+        let samples = sampleCache.get(p.polygons);
+        if (!samples) {
+          samples = samplePoints(segs, 0.25);
+          sampleCache.set(p.polygons, samples);
+        }
+        for (const q of samples) {
           const dq = pointPolylineDist(q, c.points);
           if (dq >= dist) continue; // cannot lower the minimum
           if (dq < req - TOL) {
@@ -204,7 +209,8 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
 
   // distances per chain
   const segCache = new Map<unknown, [XY, XY][]>();
-  const measures = site.chains.map((c) => chainMeasures(site, c, plates, segCache));
+  const sampleCache = new Map<unknown, XY[]>(); // relief samples per floor geometry, shared by every chain
+  const measures = site.chains.map((c) => chainMeasures(site, c, plates, segCache, sampleCache));
   // MR 55's commercial limb (D10): any part within 20 m of a road line (plot-edge distance + gap)
   const withinRoad20 = site.chains.some((c, i) => c.role === 'road' && measures[i]!.minDist + c.gap <= 20 + TOL);
   const art50Own = roadSetbackApplies({ floors: ms.floors, height: ms.height, gfa: ms.gfa, dwelling });

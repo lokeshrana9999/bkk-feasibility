@@ -6,8 +6,8 @@ import { buildDesigns } from './designs.js';
 import { buildHigh, buildLow, highGate, hotelBanLabel, roadFacts, type Site } from './envelope.js';
 import { cleanPlot } from './frame.js';
 import type { Paths64 } from 'clipper2-ts';
-import { and, bufferLine, or, toPath } from './geom.js';
-import { polylineDist } from './measure.js';
+import { and, area, bufferLine, or, toPath } from './geom.js';
+import { pointSegDist, polylineDist } from './measure.js';
 import {
   PARAMS, RULES, RULE_ORDER, TYPE_PARAMS, canalSetback, clearAround, privateSetback, roadSetback,
 } from './rules.js';
@@ -54,6 +54,16 @@ export function reliefPartners(chains: Chain[], enabled: boolean): number[][] {
   };
   // the chains cover the whole plot outline, so their points bound any building on it
   const plotPts = chains.flatMap((c) => c.points);
+  // each chain's extent is needed against many partners: computed once (Codex #13)
+  const extents = new Map<number, number>();
+  const extentOf = (c: Chain) => {
+    let e = extents.get(c.id);
+    if (e === undefined) {
+      e = extentAlong(plotPts, c);
+      extents.set(c.id, e);
+    }
+    return e;
+  };
   for (const n of chains) {
     if (n.role !== 'road') continue;
     for (const w of chains) {
@@ -70,8 +80,8 @@ export function reliefPartners(chains: Chain[], enabled: boolean): number[][] {
       // reading finds the engine laxer.
       const corner = turnAt(n, w) !== null || turnAt(w, n) !== null;
       const tooLong = corner
-        ? extentAlong(plotPts, n) > PARAMS.reliefReach
-        : extentAlong(plotPts, w) > PARAMS.reliefReach || extentAlong(plotPts, n) > PARAMS.reliefReach;
+        ? extentOf(n) > PARAMS.reliefReach
+        : extentOf(w) > PARAMS.reliefReach || extentOf(n) > PARAMS.reliefReach;
       if (tooLong) continue;
       out[n.id]!.push(w.id);
     }
@@ -187,15 +197,49 @@ function run(input: EngineInput): EngineOutput {
   const plotPath = [toPath(plot.ring)];
   // chains with the same partners share one region object (the envelope groups cuts by it)
   const regionByKey = new Map<string, Paths64>();
+  // Codex #13: each wider road's 60 m reach is clipped to the plot once and shared by every
+  // partner set it belongs to; when one piece already covers the whole plot, the region is that
+  // piece (one object for all such sets, so the envelope cuts them as one group) and the union
+  // of hundreds of 60 m buffers is never built.
+  const pieces = new Map<number, Paths64>();
+  const plotMm2 = area(plotPath);
+  // built short of 60 m by the safety margin and any simplification shift, so neither
+  // rounding nor simplification can stretch the relief past 60 m of the true road
+  const reach = PARAMS.reliefReach - PARAMS.safety - plot.simplifyDev;
+  let fullRegion: Paths64 | null = null;
+  const pieceOf = (w: number) => {
+    let p = pieces.get(w);
+    if (!p) {
+      p = and(bufferLine(chainPaths[w]!, chains[w]!.closed, reach), plotPath);
+      pieces.set(w, p);
+    }
+    return p;
+  };
+  // A sufficient test that w's buffer holds the whole plot, without the boolean: every plot
+  // corner within reach of one segment of w, less the chord (arcTol) and grid error (distance to
+  // a segment is convex, so then the whole plot is). Then the piece is the plot (area equal).
+  const covers = new Map<number, boolean>();
+  const coversPlot = (w: number) => {
+    let ok = covers.get(w);
+    if (ok === undefined) {
+      const pts = chains[w]!.points;
+      const lim = reach - PARAMS.arcTol - 0.003;
+      ok = false;
+      for (let k = 0; k + 1 < pts.length && !ok; k++) ok = plot.ring.every((v) => pointSegDist(v, pts[k]!, pts[k + 1]!) <= lim);
+      covers.set(w, ok);
+    }
+    return ok;
+  };
   const reliefRegion = chains.map((c) => {
     const ps = partners[c.id]!;
     if (ps.length === 0) return null;
     const key = ps.join(',');
     let region = regionByKey.get(key);
     if (!region) {
-      // built short of 60 m by the safety margin and any simplification shift, so neither
-      // rounding nor simplification can stretch the relief past 60 m of the true road
-      region = and(or(ps.map((w) => bufferLine(chainPaths[w]!, chains[w]!.closed, PARAMS.reliefReach - PARAMS.safety - plot.simplifyDev))), plotPath);
+      // the first partner (in order) whose piece is the whole plot, as `find` over all pieces would
+      const fullAt = ps.findIndex((w) => coversPlot(w) || area(pieceOf(w)) === plotMm2);
+      if (fullAt >= 0) region = fullRegion ??= pieceOf(ps[fullAt]!);
+      else region = ps.length === 1 ? pieceOf(ps[0]!) : or(ps.map(pieceOf));
       regionByKey.set(key, region);
     }
     return region;
