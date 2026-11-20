@@ -221,20 +221,22 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
         Number.isFinite(worst2x.margin) ? `${fmt(worst2x.dist, 3)} m` : 'exempt',
         worst2x.margin >= -TOL ? 'pass' : 'fail',
       ));
-    } else if (c.role === 'private') {
-      if (!ms.high) {
-        // per floor: MR 55 art. 50 (building height) and ord. art. 54 (floor 3 up / above 9 m)
-        let worst = { margin: Infinity, level: 0, req: 0, dist: Infinity };
-        plates.forEach((p, i) => {
-          const req = privateSetback(ms.height, p.level, p.z1);
-          const margin = perLevel[i]! - req;
-          if (margin < worst.margin) worst = { margin, level: p.level, req, dist: perLevel[i]! };
-        });
-        checks.push(row(`private-${c.id}`, 'MR55-50-PRIV', `Setback from ${lbl}`, `floor ${worst.level}: >= ${fmt(worst.req)} m`, `${fmt(worst.dist, 3)} m`, worst.margin >= -TOL ? 'pass' : 'fail'));
-      }
-    } else {
+    } else if (c.role === 'canal') {
       const req = canalSetback(c.width ?? 0, c.gap);
       checks.push(row(`canal-${c.id}`, 'MR55-42-CANAL', `Setback from ${lbl}`, `>= ${fmt(req)} m`, `${fmt(minDist, 3)} m`, minDist >= req - TOL ? 'pass' : 'fail'));
+    }
+    // private boundary, or a road / canal whose gap strip is another owner's land (D12)
+    const privateEdge = c.role === 'private' || c.gapOwner === 'private';
+    if (privateEdge && !ms.high) {
+      // per floor: MR 55 art. 50 (building height) and ord. art. 54 (floor 3 up / above 9 m)
+      let worst = { margin: Infinity, level: 0, req: 0, dist: Infinity };
+      plates.forEach((p, i) => {
+        const req = privateSetback(ms.height, p.level, p.z1);
+        const margin = perLevel[i]! - req;
+        if (margin < worst.margin) worst = { margin, level: p.level, req, dist: perLevel[i]! };
+      });
+      const what = c.role === 'private' ? `Setback from ${lbl}` : `Setback from ${lbl} (gap strip is private land)`;
+      checks.push(row(`private-${c.id}`, 'MR55-50-PRIV', what, `floor ${worst.level}: >= ${fmt(worst.req)} m`, `${fmt(worst.dist, 3)} m`, worst.margin >= -TOL ? 'pass' : 'fail'));
     }
     if (ms.high) {
       checks.push(row(`mr33-4-${c.id}`, 'MR33-4', `6 m from ${lbl} (high-rise)`, `>= ${fmt(PARAMS.highSetback)} m`, `${fmt(minDist, 3)} m`, minDist >= PARAMS.highSetback - TOL ? 'pass' : 'fail'));

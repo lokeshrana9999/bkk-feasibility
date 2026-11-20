@@ -34,6 +34,7 @@ export function buildChains(ring: XY[], edges: EdgeInfo[]): Chain[] {
       gap: e.gap ?? 0,
     };
     if (e.width !== undefined) c.width = e.width;
+    if (e.gapOwner === 'private' && c.gap > 0) c.gapOwner = 'private';
     if (e.name !== undefined) c.name = e.name;
     return c;
   };

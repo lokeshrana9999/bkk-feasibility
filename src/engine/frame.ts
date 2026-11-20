@@ -35,7 +35,8 @@ export function signedArea(ring: XY[]): number {
 }
 
 export function edgeKey(e: EdgeInfo): string {
-  return e.role === 'private' ? 'private' : `${e.role}|${e.width}|${e.gap ?? 0}|${e.name ?? ''}`;
+  const owner = e.gapOwner === 'private' ? '|private-gap' : '';
+  return e.role === 'private' ? 'private' : `${e.role}|${e.width}|${e.gap ?? 0}|${e.name ?? ''}${owner}`;
 }
 
 const err = (code: EngineError['code'], message: string, index?: number): EngineError =>
@@ -221,6 +222,11 @@ export function cleanPlot(rawRing: unknown, rawEdges: unknown, units: 'lonlat' |
         if (g !== e.gap) warnings.push({ code: 'gap-clamped', message: `edge ${i}: gap clamped to ${g} m` });
       }
       out.gap = g;
+      if (e.gapOwner !== undefined) {
+        if (e.gapOwner !== 'road' && e.gapOwner !== 'private') return err('invalid-edge', `edge ${i}: gapOwner must be 'road' or 'private'`, i);
+        // only a real strip can belong to someone; 'road' is the default and is not stored
+        if (e.gapOwner === 'private' && g > 0) out.gapOwner = 'private';
+      }
     }
     edges.push(out);
   }

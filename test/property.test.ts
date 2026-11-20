@@ -46,9 +46,8 @@ function partners(r: EngineResult): number[][] {
 //  - a road chain is (width, gap) and each floor is (level, top); a canal is (width, gap); a
 //    private chain is a boundary with openings. Clear space (ord. 55 / MR 33 art. 3) applies on
 //    every edge. The 2x readings (MR 55 art. 44, ord. 49) are split off as the part that
-//    wider-road relief can lift; everything else is the base. Gap land is treated as public
-//    (the engine's model); the oracle would add a private setback if it were someone's land
-//    (DISAGREEMENTS D12).
+//    wider-road relief can lift; everything else is the base. Gap land is public unless the
+//    edge says gapOwner 'private'; then the oracle's private distance is added (D12).
 //  - wider-road relief per (narrow road chain, wider road chain): corner = they meet at a turn
 //    of 30 degrees or more, or they do not meet and their end-to-end directions differ by 30
 //    degrees or more (eg a chamfered corner); flanked (art. 45) = they do not meet and run within
@@ -75,12 +74,15 @@ const finiteMax = (rs: O.Reading[]) => rs.reduce((m, r) => (Number.isFinite(r.d)
 
 /** Oracle requirement for a chain at a floor: base (never relieved) and the 2x part. */
 function oracleReq(b: O.Building, c: Chain, level: number, top: number, clear: number): { base: number; twoX: number } {
+  const priv = O.requiredPrivateDistance(b, { level, topM: top }).max;
+  // a gap strip of private land (D12): the caller adds the private distance (oracle README call 11)
+  const privGap = c.gapOwner === 'private' ? priv : 0;
   if (c.role === 'road') {
     const rs = O.requiredRoadDistance(b, { widthM: c.width ?? 0, gapM: c.gap }, { level, topM: top }).readings;
-    return { base: Math.max(clear, finiteMax(rs.filter((r) => !TWO_X_CITES.has(r.cite)))), twoX: finiteMax(rs.filter((r) => TWO_X_CITES.has(r.cite))) };
+    return { base: Math.max(clear, privGap, finiteMax(rs.filter((r) => !TWO_X_CITES.has(r.cite)))), twoX: finiteMax(rs.filter((r) => TWO_X_CITES.has(r.cite))) };
   }
-  if (c.role === 'private') return { base: Math.max(clear, O.requiredPrivateDistance(b, { level, topM: top }).max), twoX: 0 };
-  return { base: Math.max(clear, O.requiredCanalDistance(b, { widthM: c.width ?? 0, gapM: c.gap }).max), twoX: 0 };
+  if (c.role === 'private') return { base: Math.max(clear, priv), twoX: 0 };
+  return { base: Math.max(clear, privGap, O.requiredCanalDistance(b, { widthM: c.width ?? 0, gapM: c.gap }).max), twoX: 0 };
 }
 
 const same = (a: XY, b: XY) => Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;

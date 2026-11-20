@@ -69,7 +69,7 @@ export const plotRing = fc
   });
 
 const edge: fc.Arbitrary<EdgeInfo> = fc.oneof(
-  { weight: 4, arbitrary: fc.record({ w: fc.double({ min: 3, max: 40, noNaN: true }), g: fc.constantFrom(0, 0, 0.5, 2) }).map(({ w, g }): EdgeInfo => ({ role: 'road', width: Math.round(w * 2) / 2, gap: g, source: 'user' })) },
+  { weight: 4, arbitrary: fc.record({ w: fc.double({ min: 3, max: 40, noNaN: true }), g: fc.constantFrom(0, 0, 0.5, 2), own: fc.constantFrom('road', 'road', 'road', 'private') }).map(({ w, g, own }): EdgeInfo => ({ role: 'road', width: Math.round(w * 2) / 2, gap: g, ...(own === 'private' && g > 0 ? { gapOwner: 'private' as const } : {}), source: 'user' })) },
   { weight: 6, arbitrary: fc.constant<EdgeInfo>({ role: 'private', source: 'user' }) },
   { weight: 1, arbitrary: fc.double({ min: 4, max: 20, noNaN: true }).map((w): EdgeInfo => ({ role: 'canal', width: Math.round(w), source: 'user' })) },
 );

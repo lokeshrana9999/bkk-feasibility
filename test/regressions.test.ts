@@ -178,6 +178,23 @@ describe('Codex review regressions', () => {
     for (const bad of [0, -3, 2.5, Number.NaN]) expect(evaluate({ ...B, type: 'hotel', hotelRooms: bad }).ok).toBe(false);
   });
 
+  it('D12 a 2 m gap strip owned by someone else: the plot edge keeps the private-boundary distance as well (MR 55 art. 50 / ord. art. 54)', () => {
+    // condo below 23 m on a 12 m road, gap 2 m. Was: road setback 1.2 - 2 = 0 and clear space
+    // 2 m only. With gapOwner 'private' the edge is another owner's boundary: 3 m (> 9 m tall).
+    const pub = ok({ edges: [road(12, { gap: 2 }), P, P, P] });
+    const prv = ok({ edges: [road(12, { gap: 2, gapOwner: 'private' }), P, P, P] });
+    const low = (r: EngineResult) => r.regimes.low;
+    expect(low(pub).height).toBeGreaterThan(9);
+    expect(low(pub).plates[0]!.dByChain[0]).toBe(2);
+    expect(low(prv).plates[0]!.dByChain[0]).toBe(3);
+    expect(low(prv).gfa).toBeLessThan(low(pub).gfa);
+    expect(fails(prv)).toEqual([]);
+    for (const d of prv.designs) expect(d.checks.find((c) => c.id === 'private-0')!.status).toBe('pass');
+    // the default owner is the road (the strip is public reserve), and the input is validated
+    expect(ok({ edges: [road(12, { gap: 2, gapOwner: 'road' }), P, P, P] }).regimes.low.gfa).toBe(low(pub).gfa);
+    expect(evaluate({ ...B, edges: [road(12, { gap: 2, gapOwner: 'state' as 'road' }), P, P, P] }).ok).toBe(false);
+  });
+
   it('#7 a high OSR no longer wipes out the high regime: footprint and GFA are solved together', () => {
     // was: high permitted 0 m2, low chosen. A legal 10,868 m2 tower exists (13 x 836 m2).
     const r = ok({ zone: { code: 'Y9', far: 20, osrPct: 10 } });

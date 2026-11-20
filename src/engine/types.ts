@@ -16,6 +16,12 @@ export interface EdgeInfo {
   width?: number;
   /** Distance in metres between this plot edge and the road/canal boundary (default 0). */
   gap?: number;
+  /**
+   * Who owns the gap strip (road and canal edges with gap > 0). 'road' (default): public road or
+   * canal reserve. 'private': another owner's land, so the private-boundary setback (MR 55 art. 50
+   * / ord. art. 54) also applies from this plot edge, on top of the road or canal rules.
+   */
+  gapOwner?: 'road' | 'private';
   name?: string;
   source: 'city' | 'user' | 'none';
 }
@@ -70,6 +76,8 @@ export interface Chain {
   length: number;
   width?: number;
   gap: number;
+  /** Present (and 'private') only when the gap strip is another owner's land (EdgeInfo.gapOwner). */
+  gapOwner?: 'private';
   name?: string;
 }
 

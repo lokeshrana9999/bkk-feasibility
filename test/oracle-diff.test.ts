@@ -255,6 +255,27 @@ describe('oracle differential: distances (engine >= oracle max)', () => {
     diff.done();
   });
 
+  it('gap strip owned by another (D12): road and canal edges with a private gap keep the private distance too', () => {
+    const diff = new Diff('private gap strip');
+    for (const x of BUILDINGS) for (const [level, top] of FLOORS) for (const role of ['road', 'canal'] as const) {
+      if (level > x.b.storeys) continue;
+      for (const W of [4, 8, 12, 20, 30]) for (const g of [0.25, 1, 2, 3, 6]) {
+        diff.case();
+        const c = { ...chain(role, W, g), gapOwner: 'private' as const };
+        const e = R.chainDistance(c, ctxOf(x, level, top)).base;
+        // oracle README call 11: the road / canal distance less the gap, plus the private-boundary
+        // distance from the plot edge (the caller applies it when the gap land is private)
+        const own = role === 'road'
+          ? O.requiredRoadDistance(x.b, { widthM: W, gapM: g }, { level, topM: 0 }).max
+          : O.requiredCanalDistance(x.b, { widthM: W, gapM: g }).max;
+        const o = Math.max(own, O.requiredPrivateDistance(x.b, { level, topM: top }).max);
+        if (e < o - TOL) diff.lax(`${x.label}, ${role} W ${W} private gap ${g}, floor ${level} top ${top}: engine ${e} < oracle ${o}`, null);
+        else if (e > o + TOL) diff.strict(topRule(R.chainDistance(c, ctxOf(x, level, top)).parts.filter((p) => p.rule !== 'ORD49-2X')));
+      }
+    }
+    diff.done();
+  });
+
   it('clear space all round: every building class, on road, private and canal edges', () => {
     const diff = new Diff('clear space');
     // edges where nothing but clear space (and MR 33) applies: a road and a canal 50 m away

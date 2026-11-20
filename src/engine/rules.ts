@@ -323,6 +323,11 @@ export function chainDistance(c: Chain, ctx: DistanceCtx): { base: number; twoX:
   } else {
     parts.push({ rule: 'MR55-42-CANAL', d: canalSetback(c.width ?? 0, c.gap) });
   }
+  // a gap strip owned by someone else (oracle disagreement D12, oracle README call 11): the plot
+  // edge is then another owner's land boundary, so walls with openings keep the private distance
+  if (c.role !== 'private' && c.gapOwner === 'private' && !ctx.high) {
+    parts.push({ rule: 'MR55-50-PRIV', d: privateSetback(ctx.buildingH, ctx.level, ctx.z) });
+  }
   if (ctx.high) parts.push({ rule: 'MR33-4', d: PARAMS.highSetback });
   const base = Math.max(...parts.map((p) => p.d));
   if (c.role === 'road') parts.push({ rule: 'ORD49-2X', d: twoX });
