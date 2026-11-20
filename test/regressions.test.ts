@@ -2,7 +2,7 @@
 // reviewer's input; the comment says what used to happen and what the law requires.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { evaluate } from '../src/engine/index.js';
+import { evaluate, toLocal, toLonLat } from '../src/engine/index.js';
 import type { EdgeInfo, EngineInput, EngineResult, FloorPlate, XY } from '../src/engine/index.js';
 import { buildChains } from '../src/engine/chains.js';
 import { checkDesign } from '../src/engine/checker.js';
@@ -226,6 +226,26 @@ describe('Codex review regressions', () => {
     expect(st('condo', 3, 'front-open-6')).toBe('not-assessed'); // 3 storeys on a public road
     expect(st('condo', 2, 'front-open-6')).toBeUndefined(); // 2 storeys, 8 m: not covered
     expect(st('condo', 3, 'rear-walk')).toBeUndefined(); // not commercial or public
+  });
+
+  it('#12 a small plot across the 180 degree meridian is measured the short way round', () => {
+    // was: the frame origin was the plain mean longitude (0 degrees), so the plot read as
+    // 432 km2 and was refused as too large
+    const across: [number, number][] = [[179.9999, 13], [-179.9999, 13], [-179.9999, 13.0001], [179.9999, 13.0001]];
+    const shifted: [number, number][] = across.map(([x, y]) => [x > 0 ? x - 80 : x + 280, y]);
+    const r = evaluate({ ...B, units: 'lonlat', ring: across });
+    const s = evaluate({ ...B, units: 'lonlat', ring: shifted }); // the same plot at 99.9999 to 100.0001 E
+    if (!r.ok || !s.ok) throw new Error(`refused: ${r.ok ? '' : r.message} ${s.ok ? '' : s.message}`);
+    expect(r.plot.area).toBeGreaterThan(200);
+    expect(r.plot.area).toBeLessThan(300);
+    expect(r.plot.area).toBeCloseTo(s.plot.area, 6);
+    expect(Math.abs(r.frame.lon0)).toBeGreaterThan(179.99);
+    // toLocal / toLonLat round-trip every vertex (longitudes come back in [-180, 180])
+    for (const [lon, lat] of across) {
+      const [lon2, lat2] = toLonLat(r.frame, toLocal(r.frame, lon, lat));
+      expect(Math.abs(lon2 - lon)).toBeLessThan(1e-9);
+      expect(Math.abs(lat2 - lat)).toBeLessThan(1e-9);
+    }
   });
 
   it('#7 a high OSR no longer wipes out the high regime: footprint and GFA are solved together', () => {

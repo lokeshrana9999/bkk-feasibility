@@ -15,13 +15,23 @@ export function metresPerDegree(latDeg: number): { lon: number; lat: number } {
   };
 }
 
-export function toLocal(frame: Frame, lon: number, lat: number): XY {
-  return [(lon - frame.lon0) * frame.mPerDegLon + 0, (lat - frame.lat0) * frame.mPerDegLat + 0];
+/**
+ * A longitude difference brought into [-180, 180] (degrees), so a plot across the 180 degree
+ * meridian is measured the short way round (Codex #12). Identity (bit for bit) inside that range.
+ */
+function wrapLon(d: number): number {
+  return d > 180 ? d - 360 : d < -180 ? d + 360 : d;
 }
 
-/** Inverse of toLocal; the scene layer uses it to place plates on the map. */
+export function toLocal(frame: Frame, lon: number, lat: number): XY {
+  const dLon = frame.units === 'lonlat' ? wrapLon(lon - frame.lon0) : lon - frame.lon0;
+  return [dLon * frame.mPerDegLon + 0, (lat - frame.lat0) * frame.mPerDegLat + 0];
+}
+
+/** Inverse of toLocal; the scene layer uses it to place plates on the map. Longitudes come back in [-180, 180]. */
 export function toLonLat(frame: Frame, p: XY): [number, number] {
-  return [frame.lon0 + p[0] / frame.mPerDegLon, frame.lat0 + p[1] / frame.mPerDegLat];
+  const lon = frame.lon0 + p[0] / frame.mPerDegLon;
+  return [frame.units === 'lonlat' ? wrapLon(lon) : lon, frame.lat0 + p[1] / frame.mPerDegLat];
 }
 
 export function signedArea(ring: XY[]): number {
@@ -233,13 +243,17 @@ export function cleanPlot(rawRing: unknown, rawEdges: unknown, units: 'lonlat' |
 
   // frame: origin at the vertex mean (metre input is translated too, so local
   // coordinates stay small and integer-millimetre geometry stays exact)
+  // (lon/lat: longitudes are unwrapped around the first point's meridian first, so a plot
+  // across 180 degrees averages to a meridian inside it, not to one on the far side of the globe)
+  const ref = pts[0]![0];
   let sx = 0;
   let sy = 0;
   for (const p of pts) {
-    sx += p[0];
+    const d = units === 'lonlat' ? p[0] - ref : 0;
+    sx += d > 180 ? p[0] - 360 : d < -180 ? p[0] + 360 : p[0];
     sy += p[1];
   }
-  const lon0 = sx / pts.length;
+  const lon0 = units === 'lonlat' ? wrapLon(sx / pts.length) : sx / pts.length;
   const lat0 = sy / pts.length;
   let frame: Frame;
   if (units === 'lonlat') {
