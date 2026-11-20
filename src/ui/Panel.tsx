@@ -5,6 +5,7 @@ import type { Area } from '../site/data';
 import type { LL } from '../site/geo';
 import type { ZoneHit } from '../site/zone';
 import { DEMOS, TYPES, fmt, type EdgeOverride, type UiEdge } from './state';
+import { Search } from './Search';
 
 interface Props {
   areas: Area[];
@@ -38,6 +39,7 @@ interface Props {
   onDemo: (r: LL[]) => void;
   onArea: (a: Area) => void;
   onFit: () => void;
+  onSearch: (p: LL, zoom: number, area: number | null) => void;
 }
 
 type Tab = 'designs' | 'rules' | 'floors' | 'notes';
@@ -61,6 +63,7 @@ export function Panel(p: Props) {
       {p.dataError && <div className="banner err">{p.dataError}</div>}
 
       <Section title="Plot">
+        <Search onPick={p.onSearch} />
         <div className="row gap">
           <button className="btn primary" onClick={p.onDraw} disabled={p.drawing}>
             {p.drawing ? 'Drawing…' : p.ring ? 'Redraw plot' : 'Draw plot'}

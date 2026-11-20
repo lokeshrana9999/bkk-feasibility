@@ -6,7 +6,7 @@ import {
   loadAreas, loadBuildings, loadRow, loadZonesAll, loadZonesY9, type Area, type Building, type RowFeature, type ZonePoly,
 } from './site/data';
 import { areaM2, bboxHit, bboxOf, centroidLL, makeFrame, pointInRing, selfIntersects, toXY, type LL } from './site/geo';
-import { detectEdges } from './site/roads';
+import { detectEdges, type DetectedEdge } from './site/roads';
 import { lookupZone, type ZoneHit } from './site/zone';
 import { EngineClient } from './worker/client';
 import { Panel } from './ui/Panel';
@@ -44,6 +44,7 @@ export default function App() {
 
   const [viewArea, setViewArea] = useState<Area | null>(null);
   const [rows, setRows] = useState<RowFeature[]>([]);
+  const [rowsFor, setRowsFor] = useState<number | null>(null);
   const [rowFc, setRowFc] = useState<unknown>(null);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [outside, setOutside] = useState<ZoneHit | null>(null);
@@ -136,6 +137,7 @@ export default function App() {
     loadRow(activeArea).then((r) => {
       if (!live) return;
       setRows(r);
+      setRowsFor(activeArea.id);
       setRowFc({
         type: 'FeatureCollection',
         features: r.map((f) => ({ type: 'Feature', id: f.id, properties: { kind: f.kind, name: f.name }, geometry: { type: 'MultiPolygon', coordinates: f.polys } })),
@@ -151,6 +153,18 @@ export default function App() {
   const ringOk = !!ring && ring.length >= 3 && !selfIntersects(ring);
   const detected = useMemo(() => (ring && ringOk ? detectEdges(ring, plotArea ? rows : []) : []), [ring, ringOk, rows, plotArea]);
   const edges = useMemo(() => mergeEdges(detected, overrides), [detected, overrides]);
+
+  // frame a plot set from outside once its roads are known: camera across the main road
+  const fitPending = useRef(false);
+  const frame = useCallback(() => {
+    if (ring) mapRef.current?.fitRing(ring, viewBearing(ring, detected));
+  }, [ring, detected]);
+  useEffect(() => {
+    if (!fitPending.current || !ring) return;
+    if (plotArea && rowsFor !== plotArea.id) return;
+    fitPending.current = false;
+    frame();
+  }, [frame, ring, plotArea, rowsFor]);
 
   // ---- engine input
   const input: EngineInput | null = useMemo(() => {
@@ -219,9 +233,17 @@ export default function App() {
         show2x: view.twoX,
         showBuildings: view.buildings,
         hoverEdge,
+        onEdgeClick: (i) => {
+          const order = ['road', 'canal', 'private'] as const;
+          const cur = edgesRef.current[i]?.role ?? 'private';
+          setOverride(i, { role: order[(order.indexOf(cur) + 1) % 3], width: undefined, gap: undefined });
+        },
+        onEdgeHover: setHoverEdge,
       }),
     [result, input, near, ring, edges, design, view, hoverEdge],
   );
+  const edgesRef = useRef(edges);
+  edgesRef.current = edges;
 
   const setOverride = useCallback((i: number, o: EdgeOverride | null) => {
     setOverrides((prev) => {
@@ -244,6 +266,9 @@ export default function App() {
           onRing={onRing}
           onDrawingChange={setDrawing}
           onReady={() => setMapReady(true)}
+          onWantFit={() => {
+            fitPending.current = true;
+          }}
         />
         {drawing && <div className="map-hint">Click to place corners. Click the first corner to close the plot.</div>}
         {!drawing && !ring && mapReady && (
@@ -285,10 +310,39 @@ export default function App() {
           setViewArea(a);
           mapRef.current?.flyTo(a.labelPoint, 16);
         }}
-        onFit={() => ring && mapRef.current?.fitRing(ring)}
+        onFit={frame}
+        onSearch={(p, zoom, areaId) => {
+          const a = areas.find((x) => x.id === areaId);
+          if (a) setViewArea(a);
+          mapRef.current?.flyTo(p, zoom);
+        }}
       />
     </div>
   );
+}
+
+/**
+ * Camera bearing that looks at the plot from across its longest road edge, turned 30 degrees
+ * for a three-quarter view (so the 2:1 plane and the setbacks read). -18 when there is no road.
+ */
+function viewBearing(ring: LL[], det: DetectedEdge[]): number {
+  let best = -1;
+  let len = 0;
+  det.forEach((e, i) => {
+    if (e.role === 'road' && e.length > len) [best, len] = [i, e.length];
+  });
+  if (best < 0) return -18;
+  const f = makeFrame(ring[0]![0], ring[0]![1]);
+  const xy = ring.map((p) => toXY(f, p));
+  const a = xy[best]!;
+  const b = xy[(best + 1) % xy.length]!;
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  let nx = (b[1] - a[1]) / L;
+  let ny = -(b[0] - a[0]) / L;
+  const m = [(a[0] + b[0]) / 2 + nx * 0.3, (a[1] + b[1]) / 2 + ny * 0.3];
+  if (pointInRing(m, xy)) [nx, ny] = [-nx, -ny];
+  // camera on the road side, looking into the plot (direction -n)
+  return (Math.atan2(-nx, -ny) * 180) / Math.PI + 30;
 }
 
 function Legend({ view, setView, hasGhost }: { view: ViewToggles; setView: (v: ViewToggles) => void; hasGhost: boolean }) {

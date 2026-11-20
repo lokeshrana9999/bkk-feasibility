@@ -26,7 +26,7 @@ export interface MapHandle {
   setPlot(ring: LL[], fly?: boolean): void;
   startDrawing(): void;
   flyTo(center: LL, zoom?: number): void;
-  fitRing(ring: LL[]): void;
+  fitRing(ring: LL[], bearing?: number): void;
 }
 
 interface Props {
@@ -37,6 +37,8 @@ interface Props {
   onRing: (ring: LL[] | null) => void;
   onDrawingChange: (drawing: boolean) => void;
   onReady: () => void;
+  /** A plot was set from outside (demo, link): the app frames it once its roads are known. */
+  onWantFit?: () => void;
 }
 
 const STYLE = 'https://tiles.openfreemap.org/styles/positron';
@@ -225,7 +227,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
       plotId.current = id ?? null;
       if (id !== null && id !== undefined) draw.selectFeature(id);
       cb.current.onRing(ring);
-      if (fly) this.fitRing(ring);
+      if (fly) cb.current.onWantFit?.();
     },
     startDrawing() {
       const draw = drawRef.current;
@@ -242,7 +244,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
     flyTo(center, zoom = 16.4) {
       mapRef.current?.flyTo({ center, zoom, pitch: 55, duration: 1200 });
     },
-    fitRing(ring) {
+    fitRing(ring, bearing) {
       const map = mapRef.current;
       if (!map) return;
       const xs = ring.map((p) => p[0]);
@@ -250,7 +252,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
       const c: LL = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
       const span = Math.max(Math.max(...xs) - Math.min(...xs), (Math.max(...ys) - Math.min(...ys)) * 1.03);
       const zoom = Math.min(18, Math.max(15, Math.log2(360 / Math.max(span, 1e-5)) - 2.2));
-      map.flyTo({ center: c, zoom, pitch: 58, bearing: map.getBearing() || -18, duration: 1000 });
+      map.flyTo({ center: c, zoom, pitch: 58, bearing: bearing ?? (map.getBearing() || -18), duration: 1000 });
     },
   }));
 

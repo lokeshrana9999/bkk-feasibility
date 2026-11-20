@@ -7,7 +7,7 @@ import { toLonLat } from '../engine/frame';
 import type { Chain, Design, EdgeRole, EngineResult, FloorPlate, Frame, XY } from '../engine/types';
 import type { Building } from '../site/data';
 import type { LL } from '../site/geo';
-import { pointInRing } from '../site/geo';
+import { makeFrame, pointInRing, toLL, toXY } from '../site/geo';
 
 export interface SceneState {
   result: EngineResult | null;
@@ -20,6 +20,8 @@ export interface SceneState {
   show2x: boolean;
   showBuildings: boolean;
   hoverEdge: number | null;
+  onEdgeClick?: (i: number) => void;
+  onEdgeHover?: (i: number | null) => void;
 }
 
 type V3 = [number, number, number];
@@ -119,7 +121,20 @@ function build(s: SceneState): Layer[] {
 
   if (s.ring && s.ring.length >= 3) {
     const n = s.ring.length;
-    const edges = s.ring.map((p, i) => ({ path: [p, s.ring![(i + 1) % n]!], i, role: s.roles[i] ?? 'private' }));
+    const ring = s.ring;
+    const f = makeFrame(ring[0]![0], ring[0]![1]);
+    const xy = ring.map((p) => toXY(f, p));
+    // labels sit 5 m outside each edge's midpoint (the midpoint itself is terra-draw's add-corner handle)
+    const edges = ring.map((p, i) => {
+      const a = xy[i]!;
+      const b = xy[(i + 1) % n]!;
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      let nx = (b[1] - a[1]) / L;
+      let ny = -(b[0] - a[0]) / L;
+      const m: XY = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (pointInRing([m[0] + nx * 0.3, m[1] + ny * 0.3], xy)) [nx, ny] = [-nx, -ny];
+      return { path: [p, ring[(i + 1) % n]!], i, role: s.roles[i] ?? 'private', label: toLL(f, [m[0] + nx * 5, m[1] + ny * 5]) };
+    });
     layers.push(
       new PathLayer<(typeof edges)[number]>({
         id: 'plot-edges',
@@ -135,7 +150,13 @@ function build(s: SceneState): Layer[] {
       new TextLayer<(typeof edges)[number]>({
         id: 'edge-labels',
         data: edges,
-        getPosition: (e) => [(e.path[0]![0] + e.path[1]![0]) / 2, (e.path[0]![1] + e.path[1]![1]) / 2, 0],
+        pickable: true,
+        onClick: (info) => {
+          if (info.object) s.onEdgeClick?.(info.object.i);
+          return true;
+        },
+        onHover: (info) => s.onEdgeHover?.(info.object ? info.object.i : null),
+        getPosition: (e) => [e.label[0], e.label[1], 0],
         getText: (e) => String(e.i + 1),
         getSize: 12,
         getColor: [255, 255, 255, 255],
@@ -215,9 +236,10 @@ function build(s: SceneState): Layer[] {
         id: 'two-x',
         data: twoXPlanes(r.frame, r.plot.ring, r.chains, chosen.height),
         getPolygon: (p: V3[][]) => p,
-        getFillColor: [255, 104, 56, 46],
-        extruded: false,
-        _full3d: true,
+        getFillColor: [255, 104, 56, 60],
+        // a hair-thin extrusion: the top face then follows each vertex's own height (a slope)
+        extruded: true,
+        getElevation: 0.02,
         material: false,
         parameters: { depthWriteEnabled: false, cullMode: 'none' },
       }),
