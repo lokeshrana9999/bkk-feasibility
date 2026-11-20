@@ -48,6 +48,7 @@ export default function App() {
   const [ov, setOv] = useState<{ key: string; map: Record<number, EdgeOverride> }>({ key: '', map: {} });
   const ovNext = useRef<Record<number, EdgeOverride> | null>(null);
   const [hoverEdge, setHoverEdge] = useState<number | null>(null);
+  const [hoverFloor, setHoverFloor] = useState<{ src: 'env' | 'design'; level: number } | null>(null);
   const [design, setDesign] = useState(0);
   const [view, setView] = useState<ViewToggles>({ envelope: true, ghost: false, twoX: false, buildings: true, row: true });
 
@@ -320,6 +321,7 @@ export default function App() {
         show2x: view.twoX,
         showBuildings: view.buildings,
         hoverEdge,
+        hoverFloor,
         onEdgeClick: (i) => {
           const order = ['road', 'canal', 'private'] as const;
           const cur = edgesRef.current[i]?.role ?? 'private';
@@ -327,7 +329,7 @@ export default function App() {
         },
         onEdgeHover: setHoverEdge,
       }),
-    [result, input, near, ring, eRing, edges, design, view, hoverEdge, setOverride],
+    [result, input, near, ring, eRing, edges, design, view, hoverEdge, hoverFloor, setOverride],
   );
 
   const status: PlotStatus = !ring
@@ -376,6 +378,7 @@ export default function App() {
             {siteError} <button className="link" onClick={() => setRetry((n) => n + 1)}>Retry</button>
           </div>
         )}
+        {!drawing && input && result && <ResultChip r={result} design={design} busy={busy} />}
         {drawing && <div className="map-hint">Click to place corners; click the first corner to close. Corners cannot cross the outline. Esc cancels.</div>}
         {!drawing && !ring && mapReady && (
           <div className="map-hint">No plot. Press <b>Draw plot</b> in the panel, or pick a demo.</div>
@@ -393,6 +396,7 @@ export default function App() {
         edges={eRing ? edges : []}
         setOverride={setOverride}
         hoverEdge={hoverEdge}
+        setHoverFloor={setHoverFloor}
         setHoverEdge={setHoverEdge}
         type={type}
         setType={setType}
@@ -459,6 +463,23 @@ function viewBearing(ring: LL[], det: DetectedEdge[]): number {
   if (pointInRing(m, xy)) [nx, ny] = [-nx, -ny];
   // camera on the road side, looking into the plot (direction -n)
   return (Math.atan2(-nx, -ny) * 180) / Math.PI + 30;
+}
+
+/** The headline result over the map (on a phone the panel is below the fold). */
+function ResultChip({ r, design, busy }: { r: EngineResult; design: number; busy: boolean }) {
+  const env = r.regimes[r.regimes.chosen];
+  const d = r.designs[design];
+  const n = (v: number, dp = 0) => v.toLocaleString('en-US', { maximumFractionDigits: dp, minimumFractionDigits: dp });
+  if (!env.plates.length) return <div className={`map-kpi${busy ? ' busy' : ''}`}>Nothing can be built on this plot</div>;
+  return (
+    <div className={`map-kpi${busy ? ' busy' : ''}`}>
+      <span><b>{n(env.permittedGfa)} m²</b> allowed</span>
+      <span>FAR {n(env.farReached, 2)}</span>
+      <span>{env.floors} floors · {n(env.height, 1)} m</span>
+      <span>{env.regime === 'high' ? 'High-rise' : 'Low-rise'}</span>
+      {d && <span className={d.passes ? 'ok' : 'bad'}>{d.name}: {d.passes ? 'passes' : 'fails'}</span>}
+    </div>
+  );
 }
 
 function Legend({ view, setView, hasGhost }: { view: ViewToggles; setView: (v: ViewToggles) => void; hasGhost: boolean }) {

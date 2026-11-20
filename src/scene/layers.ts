@@ -20,6 +20,8 @@ export interface SceneState {
   show2x: boolean;
   showBuildings: boolean;
   hoverEdge: number | null;
+  /** A floor hovered in the floor table: its plate is outlined in 3D. */
+  hoverFloor: { src: 'env' | 'design'; level: number } | null;
   onEdgeClick?: (i: number) => void;
   onEdgeHover?: (i: number | null) => void;
 }
@@ -228,6 +230,34 @@ function build(s: SceneState): Layer[] {
         updateTriggers: { getFillColor: d.id },
       }),
     );
+  }
+
+  if (s.hoverFloor) {
+    const plates = s.hoverFloor.src === 'design' && d ? d.plates : chosen.plates;
+    const p = plates.find((x) => x.level === s.hoverFloor!.level);
+    if (p) {
+      layers.push(
+        new SolidPolygonLayer<Slab>({
+          id: 'floor-hi',
+          data: slabs(r.frame, [p]),
+          extruded: true,
+          getPolygon: (x) => x.polygon,
+          getElevation: (x) => x.h,
+          getFillColor: [255, 196, 0, 170],
+          material: false,
+          parameters: { depthCompare: 'always' },
+        }),
+        new PathLayer({
+          id: 'floor-hi-line',
+          data: [...outlines(r.frame, [p], true), ...outlines(r.frame, [p], false)],
+          getPath: (x: { path: V3[] }) => x.path,
+          getColor: [200, 120, 0, 255],
+          getWidth: 2.5,
+          widthUnits: 'pixels',
+          parameters: { depthCompare: 'always' },
+        }),
+      );
+    }
   }
 
   if (s.show2x && chosen.plates.length) {

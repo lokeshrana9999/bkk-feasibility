@@ -23,6 +23,7 @@ interface Props {
   setOverride: (i: number, o: EdgeOverride | null) => void;
   hoverEdge: number | null;
   setHoverEdge: (i: number | null) => void;
+  setHoverFloor: (f: { src: 'env' | 'design'; level: number } | null) => void;
   type: BuildingType;
   setType: (t: BuildingType) => void;
   nearStation: boolean;
@@ -187,7 +188,7 @@ export function Panel(p: Props) {
           </nav>
           {tab === 'designs' && <Designs r={r} sel={p.design} setSel={p.setDesign} tidy={tidy} />}
           {tab === 'rules' && <Rules r={r} tidy={tidy} />}
-          {tab === 'floors' && <Floors r={r} design={r.designs[p.design]} tidy={tidy} />}
+          {tab === 'floors' && <Floors r={r} design={r.designs[p.design]} tidy={tidy} onHover={p.setHoverFloor} />}
           {tab === 'notes' && <Notes r={r} tidy={tidy} />}
         </>
       )}
@@ -564,7 +565,8 @@ function Rules({ r, tidy }: { r: EngineResult; tidy: Tidy }) {
   );
 }
 
-function Floors({ r, design, tidy }: { r: EngineResult; design?: Design; tidy: Tidy }) {
+function Floors({ r, design, tidy, onHover }: { r: EngineResult; design?: Design; tidy: Tidy; onHover: Props['setHoverFloor'] }) {
+  useEffect(() => () => onHover(null), [onHover]);
   const [which, setWhich] = useState<'env' | 'design'>('env');
   const env = r.regimes[r.regimes.chosen];
   const plates: FloorPlate[] = which === 'design' && design ? design.plates : env.plates;
@@ -580,7 +582,9 @@ function Floors({ r, design, tidy }: { r: EngineResult; design?: Design; tidy: T
         <thead><tr><th>Floor</th><th>From–to (m)</th><th>Area (m²)</th></tr></thead>
         <tbody>
           {[...plates].reverse().map((p) => (
-            <tr key={p.level}><td>{p.level}</td><td>{fmt(p.z0, 1)}–{fmt(p.z1, 1)}</td><td>{fmt(p.area, 1)}</td></tr>
+            <tr key={p.level} onMouseEnter={() => onHover({ src: which, level: p.level })} onMouseLeave={() => onHover(null)}>
+              <td>{p.level}</td><td>{fmt(p.z0, 1)}–{fmt(p.z1, 1)}</td><td>{fmt(p.area, 1)}</td>
+            </tr>
           ))}
         </tbody>
         <tfoot>
