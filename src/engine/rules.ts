@@ -235,9 +235,13 @@ export function twoXDistance(z: number, W: number, gap: number): number {
  * > 1,000 m2), commercial buildings (5(106), trade or business services: offices) and
  * public buildings (5(109), which names hotels), at any height. The ordinance's
  * small-dwelling exemption is not in MR 55, so it is not applied.
+ * `withinRoad20`: some part of the building is within 20 m of a public road. MR 55 also calls
+ * commercial "any other building within 20 m of a road or public way which may be used
+ * commercially" (`mr55-update.txt:36-37`); whether a declared dwelling "may be used" so cannot
+ * be assessed, so the stricter reading is applied: it is commercial (oracle disagreement D10).
  */
-export function roadSetbackApplies(b: { floors: number; height: number; gfa: number; dwelling: boolean }): boolean {
-  return b.floors > 2 || b.height > 8 || !b.dwelling || b.gfa > 2000 || (b.height >= 15 && b.gfa > 1000);
+export function roadSetbackApplies(b: { floors: number; height: number; gfa: number; dwelling: boolean; withinRoad20?: boolean }): boolean {
+  return b.floors > 2 || b.height > 8 || !b.dwelling || b.gfa > 2000 || (b.height >= 15 && b.gfa > 1000) || b.withinRoad20 === true;
 }
 
 /**

@@ -195,6 +195,21 @@ describe('Codex review regressions', () => {
     expect(evaluate({ ...B, edges: [road(12, { gap: 2, gapOwner: 'state' as 'road' }), P, P, P] }).ok).toBe(false);
   });
 
+  it('D10 a 2-storey condo within 20 m of a road keeps the road setback: MR 55 counts it as commercial (stricter reading)', () => {
+    // 7.5 m, 1,500 m2 condo on an 8 m road. Was: a small dwelling, so only the narrow-road rule
+    // (0 m on an 8 m road) applied, and 1 m from the road passed. MR 55 also calls commercial any
+    // building within 20 m of a road "which may be used commercially"; not assessable, so the
+    // checker applies it: 6 m from the centreline = 2 m from the plot edge.
+    const ring = B.ring.map((p) => [p[0] - 25, p[1] - 20] as XY);
+    const site = { ring, chains: buildChains(ring, [road(8, { gap: 0 }), P, P, P]), reliefPartners: [[], [], [], []], zone: B.zone!, type: 'condo' as const, nearStation: false };
+    const plates = (rect: XY[]): FloorPlate[] => [1, 2].map((k) => ({ level: k, z0: (k - 1) * 3.75, z1: k * 3.75, polygons: [[rect]], area: 750, dByChain: [] }));
+    const near = checkDesign(site, plates([[-15, -19], [15, -19], [15, 6], [-15, 6]])).checks.find((c) => c.id === 'road-0')!; // 1 m from the road
+    expect(near.required).toBe('>= 2.00 m');
+    expect(near.status).toBe('fail');
+    // the D10 example: 15 m from the road passes (the setback is met anyway)
+    expect(checkDesign(site, plates([[-15, -5], [15, -5], [15, 20], [-15, 20]])).checks.find((c) => c.id === 'road-0')!.status).toBe('pass');
+  });
+
   it('#7 a high OSR no longer wipes out the high regime: footprint and GFA are solved together', () => {
     // was: high permitted 0 m2, low chosen. A legal 10,868 m2 tower exists (13 x 836 m2).
     const r = ok({ zone: { code: 'Y9', far: 20, osrPct: 10 } });

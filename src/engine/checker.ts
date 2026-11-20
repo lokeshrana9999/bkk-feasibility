@@ -203,16 +203,23 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
   checks.push(row('open-floor', 'MR55-33', `Open space >= ${plotPct * 100}% of the largest floor`, `>= ${m2(plotPct * largest)}`, m2(ms.openSpace), ms.openSpace >= plotPct * largest - 0.01 ? 'pass' : 'fail'));
 
   // distances per chain
-  const art50 = roadSetbackApplies({ floors: ms.floors, height: ms.height, gfa: ms.gfa, dwelling });
-  let clearMin = Infinity;
   const segCache = new Map<unknown, [XY, XY][]>();
-  for (const c of site.chains) {
-    const { minDist, perLevel, worst2x } = chainMeasures(site, c, plates, segCache);
+  const measures = site.chains.map((c) => chainMeasures(site, c, plates, segCache));
+  // MR 55's commercial limb (D10): any part within 20 m of a road line (plot-edge distance + gap)
+  const withinRoad20 = site.chains.some((c, i) => c.role === 'road' && measures[i]!.minDist + c.gap <= 20 + TOL);
+  const art50Own = roadSetbackApplies({ floors: ms.floors, height: ms.height, gfa: ms.gfa, dwelling });
+  const art50 = roadSetbackApplies({ floors: ms.floors, height: ms.height, gfa: ms.gfa, dwelling, withinRoad20 });
+  let clearMin = Infinity;
+  for (const [ci, c] of site.chains.entries()) {
+    const { minDist, perLevel, worst2x } = measures[ci]!;
     clearMin = Math.min(clearMin, minDist);
     const lbl = chainLabel(c);
     if (c.role === 'road') {
       const req = art50 ? roadSetback(c.width ?? 0, c.gap) : narrowRoadSetback(c.width ?? 0, c.gap);
-      checks.push(row(`road-${c.id}`, 'ORD50-ROAD', `Road setback from ${lbl}`, `>= ${fmt(req)} m`, `${fmt(minDist, 3)} m`, minDist >= req - TOL ? 'pass' : 'fail'));
+      checks.push(row(
+        `road-${c.id}`, 'ORD50-ROAD', `Road setback from ${lbl}`, `>= ${fmt(req)} m`, `${fmt(minDist, 3)} m`, minDist >= req - TOL ? 'pass' : 'fail',
+        art50 && !art50Own ? 'within 20 m of a road: read as a commercial building (MR 55 definitions, stricter reading)' : undefined,
+      ));
       const relief = (site.reliefPartners[c.id] ?? []).length > 0;
       checks.push(row(
         `twox-${c.id}`, relief ? 'MR55-46' : 'ORD49-2X',
