@@ -116,6 +116,24 @@ describe('Codex review regressions', () => {
     expect(fails(office)).toEqual([]);
   });
 
+  it('D5 frontage is one straight side: 6 m + 7 m of one road around a 90 degree corner is not a 12 m side (MR 33 art. 2)', () => {
+    // was: the chain's edges were summed (13 m), so the high regime opened. "ด้านหนึ่งด้านใด"
+    // (one side) is now read as one straight side: edges within 5 degrees of each other.
+    const A = road(12, { name: 'A' });
+    const bent = ok({ ring: [[0, 6], [0, 0], [7, 0], [50, 0], [50, 40], [0, 40]], edges: [A, A, P, P, P, P] });
+    expect(bent.regimes.high.allowed).toBe(false);
+    expect(fails(bent)).toEqual([]);
+    // a 3 degree kink along the road stays one side (6 m + 6.5 m)
+    const k = (3 * Math.PI) / 180;
+    const kink = ok({ ring: [[0, 0], [6, 0], [6 + 6.5 * Math.cos(k), 6.5 * Math.sin(k)], [50, 40], [0, 40]], edges: [A, A, P, P, P] });
+    expect(kink.regimes.high.allowed).toBe(true);
+    // digitising noise (2 cm sawtooth along a straight 12 m side) does not split the side
+    const saw: [number, number][] = Array.from({ length: 25 }, (_, i) => [i / 2, i % 2 ? -0.02 : 0]);
+    const noisy = ok({ ring: [...saw, [50, 40], [0, 40]], edges: [...saw.slice(0, -1).map(() => A), P, P, P] });
+    expect(noisy.regimes.high.allowed).toBe(true);
+    expect(fails(noisy)).toEqual([]);
+  });
+
   it('#7 a high OSR no longer wipes out the high regime: footprint and GFA are solved together', () => {
     // was: high permitted 0 m2, low chosen. A legal 10,868 m2 tower exists (13 x 836 m2).
     const r = ok({ zone: { code: 'Y9', far: 20, osrPct: 10 } });

@@ -32,8 +32,8 @@
 //  - a building is (use, height, storeys, GFA, largest floor); the engine's class flags come from
 //    the same numbers the checker uses: high = height >= 23 or GFA / any floor >= 10,000
 //    (checker.ts measure), art50 = roadSetbackApplies(...) (checker.ts), dwelling = TYPE_PARAMS
-//  - a road / canal chain is (width, gap); a frontage is one road chain (width, length, gap);
-//    the engine's chain can bend, the oracle's frontage is one straight side (DISAGREEMENTS D5)
+//  - a road / canal chain is (width, gap); a frontage is one road chain (width, length, gap),
+//    its length the chain's longest straight side, as the oracle's frontage is one side (D5)
 //  - relief facts come from two synthetic road chains: corner = they meet at a 90 degree turn,
 //    flanked = parallel at the given distance; sameRoad = same name (or, unnamed, meeting at a
 //    turn under 30 degrees, the engine's own inference: DISAGREEMENTS D9). The engine has no

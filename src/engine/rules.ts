@@ -5,6 +5,7 @@
 // re-worded. Where the ordinance and a ministerial regulation differ, the
 // engine applies the stricter one (assumptions.md A3).
 
+import { straightSideLength } from './measure.js';
 import type { BuildingType, Chain, DistancePart } from './types.js';
 
 export type RuleKind = 'limit' | 'distance' | 'gate' | 'relief' | 'not-assessed';
@@ -177,6 +178,11 @@ export const PARAMS = Object.freeze({
   // plot abuts it (ติด): any gap is someone's land, so only float noise is tolerated. Was 0.5 m
   // (a map-noise call); oracle disagreement D1: the engine follows the oracle's gap = 0 reading.
   frontageGapTol: 0.001, // m, float noise only
+  // Frontage length is one straight side ("ด้านหนึ่งด้านใด", D5): edges whose directions stay
+  // within this many degrees of each other, after dropping vertices within sideNoise of the line
+  // through their neighbours (digitising noise; the same 0.1 m as LIMITS.simplifyTol).
+  sideTurnDeg: 5, // degrees, written call
+  sideNoise: 0.1, // m
   maxFloors: 60,
   minPlateArea: 40, // m2, smaller parts are dropped
   slivers: 1.5, // m, opening width
@@ -250,18 +256,34 @@ export function touchesPlot(c: Chain): boolean {
   return c.role === 'road' && c.gap <= PARAMS.frontageGapTol;
 }
 
+const sideCache = new WeakMap<Chain, number>();
+
+/**
+ * Frontage length of a road chain: its longest straight side (oracle disagreement D5). A chain
+ * that bends by PARAMS.sideTurnDeg or more, or follows a curve, is several sides, and only one
+ * of them counts ("ด้านหนึ่งด้านใดของที่ดิน", one side of the land, MR 33 art. 2, zoning art. 36).
+ */
+export function frontageLength(c: Chain): number {
+  let L = sideCache.get(c);
+  if (L === undefined) {
+    L = straightSideLength(c.points, PARAMS.sideTurnDeg, PARAMS.sideNoise);
+    sideCache.set(c, L);
+  }
+  return L;
+}
+
 /**
  * Zoning art. 16 road exceptions read with art. 36 (2)-(3) (`mr2556.txt:3102`, `3108`): the
  * plot must have a side at least as long as the road class (12 m on a >= 12 m road, 16 m on a
  * >= 16 m road) abutting that road. Road width alone is not enough (oracle disagreement D3).
  */
 export function zoningRoadFrontage(c: Chain, roadClass: number): boolean {
-  return touchesPlot(c) && (c.width ?? 0) >= roadClass && c.length >= roadClass - 0.001;
+  return touchesPlot(c) && (c.width ?? 0) >= roadClass && frontageLength(c) >= roadClass - 0.001;
 }
 
-/** MR 33 art. 2 frontage: a touching road chain at least 12 m long (1 mm float tolerance). */
+/** MR 33 art. 2 frontage: a touching road chain with a straight side of at least 12 m (1 mm float tolerance). */
 export function isGateFrontage(c: Chain): boolean {
-  return touchesPlot(c) && c.length >= PARAMS.highGateFrontage - 0.001;
+  return touchesPlot(c) && frontageLength(c) >= PARAMS.highGateFrontage - 0.001;
 }
 
 export function clearAround(buildingH: number): number {

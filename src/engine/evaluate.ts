@@ -106,7 +106,7 @@ function appliedRules(site: Site, chosen: Envelope, low: Envelope, high: Envelop
   const roads = site.chains.filter((c) => c.role === 'road');
   const privs = site.chains.filter((c) => c.role === 'private');
   const canals = site.chains.filter((c) => c.role === 'canal');
-  const rf = roadFacts(site.chains);
+  const rf = roadFacts(site.frontChains ?? site.chains);
   const reliefOn = partners.some((p) => p.length > 0);
   const n = (v: number, d = 1) => v.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
   const val: Record<string, [string, boolean]> = {
@@ -168,6 +168,8 @@ function run(input: EngineInput): EngineOutput {
   if ('ok' in plot) return plot;
   const warnings: Warning[] = [...plot.warnings];
   const chains = buildChains(plot.ring, plot.edges);
+  // the true outline's chains (the checker measures against them; frontage is read from them)
+  const trueChains = plot.original ? buildChains(plot.original.ring, plot.original.edges) : null;
   const partners = reliefPartners(chains, input.widerRoadRelief !== false);
   const chainPaths = chains.map((c) => toPath(c.points));
   // only the part of each relief region inside the plot matters (cuts are subtracted from the plot)
@@ -193,6 +195,7 @@ function run(input: EngineInput): EngineOutput {
     plot: plotPath,
     plotArea: plot.area,
     chains,
+    ...(trueChains ? { frontChains: trueChains } : {}),
     chainPaths,
     reliefPartners: partners,
     reliefRegion,
@@ -215,14 +218,11 @@ function run(input: EngineInput): EngineOutput {
   const pick = chosen === 'high' ? high : low;
 
   // the checker measures against the true outline, even when the geometry used a simplified one
-  const checkSite: CheckSite = plot.original
-    ? (() => {
-        const trueChains = buildChains(plot.original.ring, plot.original.edges);
-        return {
-          ring: plot.original.ring, chains: trueChains, reliefPartners: reliefPartners(trueChains, input.widerRoadRelief !== false),
-          zone: site.zone, type: site.type, nearStation: site.nearStation,
-        };
-      })()
+  const checkSite: CheckSite = plot.original && trueChains
+    ? {
+        ring: plot.original.ring, chains: trueChains, reliefPartners: reliefPartners(trueChains, input.widerRoadRelief !== false),
+        zone: site.zone, type: site.type, nearStation: site.nearStation,
+      }
     : { ring: plot.ring, chains, reliefPartners: partners, zone: site.zone, type: site.type, nearStation: site.nearStation };
   const designs: Design[] = buildDesigns(site, chosen, pick.paths, pick.env.plates, pick.env.caps, warnings).map((d) => {
     const { checks } = checkDesign(checkSite, d.plates);

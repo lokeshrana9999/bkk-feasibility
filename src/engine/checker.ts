@@ -6,7 +6,7 @@
 import { chainLabel } from './chains.js';
 import {
   closeRing, containmentViolationOf, pointPolylineDist, polygonSegments, polygonsArea, prepareShape, ringArea, samplePoints,
-  segmentsToPolylineDist, type ContainmentViolation, type Shape,
+  segmentsToPolylineDist, straightSideLength, type ContainmentViolation, type Shape,
 } from './measure.js';
 import {
   PARAMS, RULES, TYPE_PARAMS, canalSetback, clearAround, narrowRoadSetback, privateSetback, roadSetback, roadSetbackApplies,
@@ -247,10 +247,10 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
   let officeRoad = false; // zoning art. 16 + 36: >= 16 m of frontage on a >= 16 m road
   let hotelRoad = false; // >= 12 m of frontage on a >= 12 m road
   for (const c of site.chains) {
-    // only a road that touches the plot is frontage (zoning art. 16, MR 33 art. 2)
+    // only a road that abuts the plot is frontage (zoning art. 16 / 36, MR 33 art. 2), and its
+    // length is one straight side of the plot along it (D5), measured on the outline itself
     if (c.role !== 'road' || c.gap > PARAMS.frontageGapTol) continue;
-    let L = 0;
-    for (let i = 0; i + 1 < c.points.length; i++) L += Math.hypot(c.points[i + 1]![0] - c.points[i]![0], c.points[i + 1]![1] - c.points[i]![1]);
+    const L = straightSideLength(c.points, PARAMS.sideTurnDeg, PARAMS.sideNoise);
     const W = c.width ?? 0;
     widestRoad = Math.max(widestRoad, W);
     if (L >= PARAMS.highGateFrontage - 0.001) widestGate = Math.max(widestGate, W);

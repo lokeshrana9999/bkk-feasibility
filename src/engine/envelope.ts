@@ -13,6 +13,12 @@ export interface Site {
   plot: Paths64;
   plotArea: number;
   chains: Chain[];
+  /**
+   * Chains of the true outline when the plot was simplified (else absent): frontage facts
+   * (MR 33 art. 2, zoning art. 36) are read from them, as the checker does, so a straight side
+   * is measured on the same points in both.
+   */
+  frontChains?: Chain[];
   chainPaths: Path64[];
   /** Per chain: ids of wider road chains that relieve its 2x cut (MR 55 arts. 45-46). */
   reliefPartners: number[][];
@@ -203,7 +209,7 @@ export function roadFacts(chains: Chain[]): RoadFacts {
 export function fixedCaps(site: Site, regime: Regime): Cap[] {
   const A = site.plotArea;
   const caps: Cap[] = [{ id: 'Z16-FAR', label: `FAR ${site.zone.far} x ${A.toFixed(1)} m2`, value: site.zone.far * A }];
-  const rf = roadFacts(site.chains);
+  const rf = roadFacts(site.frontChains ?? site.chains);
   if (regime === 'low') {
     caps.push({ id: 'MR33-1', label: 'low regime: below 10,000 m2 (extra-large threshold)', value: PARAMS.lowRegimeGfaCap });
   } else {
@@ -350,7 +356,7 @@ export function buildLow(site: Site): RegimeBuild {
 }
 
 export function highGate(site: Site): { ok: boolean; reason?: string } {
-  const rf = roadFacts(site.chains);
+  const rf = roadFacts(site.frontChains ?? site.chains);
   if (rf.widestGateRoad >= PARAMS.highGateWidth) return { ok: true };
   const anyRoad = site.chains.some((c) => c.role === 'road');
   return {

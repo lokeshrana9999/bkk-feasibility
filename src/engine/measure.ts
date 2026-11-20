@@ -50,6 +50,82 @@ export function pointPolylineDist(p: XY, q: XY[]): number {
   return m;
 }
 
+/** Distance from p to the infinite line through a and b (to a when a == b). */
+function lineDist(p: XY, a: XY, b: XY): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const L = Math.hypot(dx, dy);
+  if (L === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+  return Math.abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / L;
+}
+
+/** Douglas-Peucker: indices of the vertices kept at tolerance tol (both ends always kept). */
+function simplifyIdx(pts: XY[], tol: number): number[] {
+  const n = pts.length;
+  if (n <= 2) return pts.map((_, i) => i);
+  const keep = new Uint8Array(n);
+  keep[0] = 1;
+  keep[n - 1] = 1;
+  const stack: [number, number][] = [[0, n - 1]];
+  while (stack.length > 0) {
+    const [a, b] = stack.pop()!;
+    let worst = -1;
+    let at = -1;
+    for (let k = a + 1; k < b; k++) {
+      // closed loops repeat the first point at the end: measure to the point, not a line
+      const d = lineDist(pts[k]!, pts[a]!, pts[b]!);
+      if (d > worst) {
+        worst = d;
+        at = k;
+      }
+    }
+    if (at >= 0 && worst > tol) {
+      keep[at] = 1;
+      stack.push([a, at], [at, b]);
+    }
+  }
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) if (keep[i]) out.push(i);
+  return out;
+}
+
+/**
+ * Length of the longest straight side of a polyline: "ด้านหนึ่งด้านใดของที่ดิน" (one side of the
+ * land, MR 33 art. 2; zoning art. 36) read as one straight side (oracle disagreement D5).
+ * Vertices within `noise` m of the line through their neighbours (Douglas-Peucker) are
+ * digitising noise and removed first. A side is then a run of consecutive remaining edges whose
+ * directions all lie within `turnDeg` of each other (so neither a bend nor a curve made of
+ * small turns counts as one side); its length is the sum of those edges.
+ */
+export function straightSideLength(points: XY[], turnDeg: number, noise: number): number {
+  const idx = simplifyIdx(points, noise);
+  const segs: { dir: number; len: number }[] = [];
+  for (let k = 0; k + 1 < idx.length; k++) {
+    const a = points[idx[k]!]!;
+    const b = points[idx[k + 1]!]!;
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len > 0) segs.push({ dir: Math.atan2(b[1] - a[1], b[0] - a[0]), len });
+  }
+  const lim = (turnDeg * Math.PI) / 180;
+  let best = 0;
+  for (let i = 0; i < segs.length; i++) {
+    let lo = 0;
+    let hi = 0;
+    let sum = 0;
+    for (let j = i; j < segs.length; j++) {
+      let r = segs[j]!.dir - segs[i]!.dir;
+      if (r > Math.PI) r -= 2 * Math.PI;
+      else if (r < -Math.PI) r += 2 * Math.PI;
+      lo = Math.min(lo, r);
+      hi = Math.max(hi, r);
+      if (hi - lo >= lim) break;
+      sum += segs[j]!.len;
+    }
+    if (sum > best) best = sum;
+  }
+  return best;
+}
+
 /** Closed ring as a polyline (first point repeated at the end). */
 export function closeRing(r: XY[]): XY[] {
   return r.length === 0 ? [] : [...r, r[0]!];
