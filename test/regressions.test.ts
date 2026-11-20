@@ -134,6 +134,23 @@ describe('Codex review regressions', () => {
     expect(fails(noisy)).toEqual([]);
   });
 
+  it('D9 two unnamed road frontages that do not meet are not assumed to be two roads: no relief between them', () => {
+    // a 10 m and a 12 m frontage on the south side, separated by 10 m of private boundary. Was:
+    // unnamed chains that do not meet were always different roads, so the 10 m road got relief
+    // from the 12 m one (possibly the same street changing width). Now only differing names
+    // make them two roads (MR 55 arts. 45-46 need "ถนนสาธารณะสองสาย").
+    const ring: [number, number][] = [[0, 0], [20, 0], [30, 0], [50, 0], [50, 40], [0, 40]];
+    const unnamed = ok({ ring, edges: [road(10), P, road(12), P, P, P] });
+    expect(reliefPartners(unnamed.chains, true).every((p) => p.length === 0)).toBe(true);
+    expect(unnamed.rules.find((x) => x.id === 'MR55-46')!.applies).toBe(false);
+    expect(fails(unnamed)).toEqual([]);
+    // one name missing: still not known to be two roads
+    expect(reliefPartners(ok({ ring, edges: [road(10, { name: 'A' }), P, road(12), P, P, P] }).chains, true).every((p) => p.length === 0)).toBe(true);
+    // two different names: two roads within 60 m, relief applies
+    const named = ok({ ring, edges: [road(10, { name: 'A' }), P, road(12, { name: 'B' }), P, P, P] });
+    expect(named.rules.find((x) => x.id === 'MR55-46')!.applies).toBe(true);
+  });
+
   it('#7 a high OSR no longer wipes out the high regime: footprint and GFA are solved together', () => {
     // was: high permitted 0 m2, low chosen. A legal 10,868 m2 tower exists (13 x 836 m2).
     const r = ok({ zone: { code: 'Y9', far: 20, osrPct: 10 } });

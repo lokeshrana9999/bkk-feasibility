@@ -39,8 +39,10 @@ function turnAt(a: Chain, b: Chain): number | null {
 /**
  * MR 55 arts. 45-46 relief pairs: each narrower road chain with wider road chains that are
  * a different road at a corner (art. 46) or a second road within 60 m (art. 45). When both
- * chains are named, the names decide whether they are the same road; unnamed chains that meet
- * with a turn under PARAMS.cornerTurnDeg are one road changing width. No relief within a road.
+ * chains are named, the names decide whether they are the same road. Otherwise chains that meet
+ * with a turn under PARAMS.cornerTurnDeg are one road changing width, and chains that do not
+ * meet are taken to be the same road (they may be one street interrupted by other land; the
+ * oracle takes "same road" as a fact, oracle disagreement D9). No relief within a road.
  */
 export function reliefPartners(chains: Chain[], enabled: boolean): number[][] {
   const out: number[][] = chains.map(() => []);
@@ -48,7 +50,7 @@ export function reliefPartners(chains: Chain[], enabled: boolean): number[][] {
   const sameRoad = (a: Chain, b: Chain) => {
     if (a.name && b.name) return a.name === b.name;
     const t = turnAt(a, b) ?? turnAt(b, a);
-    return t !== null && t < PARAMS.cornerTurnDeg;
+    return t === null || t < PARAMS.cornerTurnDeg;
   };
   // the chains cover the whole plot outline, so their points bound any building on it
   const plotPts = chains.flatMap((c) => c.points);

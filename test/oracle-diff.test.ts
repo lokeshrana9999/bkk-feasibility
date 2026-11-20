@@ -36,7 +36,7 @@
 //    its length the chain's longest straight side, as the oracle's frontage is one side (D5)
 //  - relief facts come from two synthetic road chains: corner = they meet at a 90 degree turn,
 //    flanked = parallel at the given distance; sameRoad = same name (or, unnamed, meeting at a
-//    turn under 30 degrees, the engine's own inference: DISAGREEMENTS D9). The engine has no
+//    turn under 30 degrees or not meeting at all, the engine's own inference: DISAGREEMENTS D9). The engine has no
 //    building length / width input, so it is compared for every value the oracle takes.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -464,8 +464,8 @@ describe('oracle differential: wider-road relief (engine eligible => oracle elig
       for (const [corner, apart] of [[true, 0], [false, 0], [false, 30], [false, 60], [false, 60 + EPS], [false, 100]] as [boolean, number][]) {
         const cs = reliefChains(narrow, wide, corner, apart, mode)!;
         const engineEligible = partnersOf!(cs, true)[0]!.includes(1);
-        // the engine's own same-road inference for unnamed chains (D9): collinear chains that meet are one road
-        const sameRoad = mode === 'same-name' || (mode === 'unnamed' && !corner && apart <= 0);
+        // the engine's own same-road inference for unnamed chains (D9): collinear chains that meet, and chains that do not meet, are one road
+        const sameRoad = mode === 'same-name' || (mode === 'unnamed' && !corner);
         for (const L of [undefined, 40, 60, 60 + EPS, 100]) for (const Wd of [undefined, 40, 60, 60 + EPS, 100]) {
           diff.case();
           const facts = { narrowWidthM: narrow, wideWidthM: wide, sameRoad, corner, roadsApartM: apart, buildingLengthAlongNarrowM: L, buildingWidthAlongWideM: Wd };

@@ -53,7 +53,7 @@ function partners(r: EngineResult): number[][] {
 //    of 30 degrees or more, or they do not meet and their end-to-end directions differ by 30
 //    degrees or more (eg a chamfered corner); flanked (art. 45) = they do not meet and run within
 //    30 degrees of parallel; sameRoad = equal names, or (unnamed) meeting at a turn under 30
-//    degrees (the engine's inference, D9); roads apart = polyline distance; building length /
+//    degrees, or (unnamed) not meeting at all (the engine's inference, D9); roads apart = polyline distance; building length /
 //    width along a road = extent of the stack's largest plate projected on that chain's end-to-end
 //    direction. If MR 55 relieves the narrow road (reliefEligible) its 2x check is skipped; if
 //    the oracle cannot assess, skipped and counted; if the only reason it refuses is the 60 m
@@ -134,7 +134,7 @@ function twoXMode(r: EngineResult, pr: number[][], c: Chain, plates: FloorPlate[
     if (w.role !== 'road' || w.id === c.id || (w.width ?? 0) <= (c.width ?? 0)) continue;
     const t = turn(c, w) ?? turn(w, c);
     const corner = t !== null ? t >= PARAMS.cornerTurnDeg : skewDeg(c, w) >= PARAMS.cornerTurnDeg;
-    const sameRoad = c.name && w.name ? c.name === w.name : t !== null && t < PARAMS.cornerTurnDeg;
+    const sameRoad = c.name && w.name ? c.name === w.name : t === null || t < PARAMS.cornerTurnDeg;
     const facts = {
       narrowWidthM: c.width ?? 0, wideWidthM: w.width ?? 0, sameRoad, corner, roadsApartM: polylineDist(c.points, w.points),
       buildingLengthAlongNarrowM: extentAlong(c, vs), buildingWidthAlongWideM: extentAlong(w, vs),
