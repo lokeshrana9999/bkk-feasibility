@@ -16,18 +16,24 @@
     "preview": "vite preview",
     "typecheck:app": "tsc -p tsconfig.app.json",
     "test:app": "vitest run --config vitest.app.config.ts",
-    "test:e2e": "playwright test --trace off"
+    "test:e2e": "playwright test --trace off",
+    "mcp:stdio": "tsx mcp/stdio.ts",
+    "build:mcp": "node scripts/build-mcp.mjs",
+    "typecheck:mcp": "tsc -p tsconfig.mcp.json",
+    "test:mcp": "vitest run --config vitest.mcp.config.ts"
   },
   "dependencies": {
     "@deck.gl/core": "^9.4.1",
     "@deck.gl/layers": "^9.4.1",
     "@deck.gl/mapbox": "^9.4.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "clipper2-ts": "2.0.1-18",
     "maplibre-gl": "^6.19.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "terra-draw": "^1.40.0",
-    "terra-draw-maplibre-gl-adapter": "^1.5.0"
+    "terra-draw-maplibre-gl-adapter": "^1.5.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@playwright/test": "1.64",
@@ -35,6 +41,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
+    "esbuild": "0.25.12",
     "fast-check": "4.3.0",
     "tsx": "4.20.6",
     "typescript": "5.9.3",

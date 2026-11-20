@@ -2,6 +2,9 @@
 // the ย.9 areas and their per-area chunks). Chunks load lazily and are cached per area.
 
 import { areaM2, bboxOf, centroidLL, polysOf, type BBox, type LL, type Poly } from './geo';
+import { nameKey, otherZones, roadNameMap, toRows, toZones, type FC } from './parse';
+
+export { nameKey };
 
 export interface Area {
   id: number;
@@ -48,8 +51,6 @@ export interface Building {
   bbox: BBox;
 }
 
-type FC = { type: 'FeatureCollection'; features: { id?: number | string; properties: Record<string, unknown>; geometry: { type: string; coordinates: unknown } }[] };
-
 async function getJson<T>(url: string): Promise<T | null> {
   try {
     const r = await fetch(url);
@@ -70,27 +71,6 @@ export async function loadAreas(): Promise<Area[]> {
   return j?.areas ?? [];
 }
 
-function toZones(fc: FC | null, isY9: boolean): ZonePoly[] {
-  if (!fc) return [];
-  return fc.features.map((f) => {
-    const p = f.properties;
-    const polys = polysOf(f.geometry);
-    return {
-      id: Number(p.id ?? f.id),
-      zone: String(p.zone ?? ''),
-      sub: String(p.sub ?? p.zone ?? ''),
-      subLatin: String(p.subLatin ?? p.sub ?? ''),
-      far: Number(p.far),
-      osr: Number(p.osr),
-      colour: p.colour as string | undefined,
-      use: p.use as string | undefined,
-      polys,
-      bbox: bboxOf(polys.flatMap((q) => q[0]!)),
-      isY9,
-    };
-  });
-}
-
 export async function loadZonesY9(): Promise<{ zones: ZonePoly[]; fc: FC | null }> {
   const fc = await getJson<FC>(`${BASE}zones_y9.json`);
   return { zones: toZones(fc, true), fc };
@@ -104,7 +84,7 @@ export function loadZonesAll(): Promise<ZonePoly[] | null> {
       allZones = null;
       return null;
     }
-    return toZones(fc, false).filter((z) => !z.zone.startsWith('ย.๙'));
+    return otherZones(fc);
   }) as Promise<ZonePoly[]>;
   return allZones;
 }
@@ -119,40 +99,19 @@ export function loadRow(area: Area): Promise<RowFeature[] | null> {
         rowCache.delete(area.id);
         return null;
       }
-      return (fc.features ?? []).map((f) => {
-        const polys = polysOf(f.geometry);
-        const k = String(f.properties.kind ?? 'road');
-        return {
-          id: Number(f.id ?? f.properties.id),
-          name: String(f.properties.name ?? ''),
-          kind: (k === 'canal' || k === 'rail' ? k : 'road') as RowFeature['kind'],
-          polys,
-          bbox: bboxOf(polys.flatMap((q) => q[0]!)),
-        };
-      });
+      return toRows(fc);
     });
     rowCache.set(area.id, p);
   }
   return p;
 }
 
-/** Thai road name reduced to a key that matches across sources ("ซอยนภาศัพท์ 2" ~ "ซอยนภาศัพท์2"). */
-export const nameKey = (s: string) => s.replace(/^(ถนน|ซอย|ทาง)/, '').replace(/[\s.()-]+/g, '');
-
 const enCache = new Map<number, Promise<Map<string, string>>>();
 /** English road names (OSM name:en) by Thai name key, for edge labels. Empty on failure. */
 export function loadRoadNames(area: Area): Promise<Map<string, string>> {
   let p = enCache.get(area.id);
   if (!p) {
-    p = getJson<FC>(`${BASE}${area.files.roads ?? `roads/${area.id}.json`}`).then((fc) => {
-      const m = new Map<string, string>();
-      for (const f of fc?.features ?? []) {
-        const th = f.properties.name;
-        const en = f.properties.nameEn;
-        if (typeof th === 'string' && typeof en === 'string' && en) m.set(nameKey(th), en);
-      }
-      return m;
-    });
+    p = getJson<FC>(`${BASE}${area.files.roads ?? `roads/${area.id}.json`}`).then(roadNameMap);
     enCache.set(area.id, p);
   }
   return p;

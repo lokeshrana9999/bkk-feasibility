@@ -3,6 +3,16 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "functions": {
+    "api/mcp.js": {
+      "includeFiles": "public/data/{areas.json,zones_y9.json,zones_all.json,row/*.json,roads/*.json}",
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/mcp", "destination": "/api/mcp" },
+    { "source": "/mcp/", "destination": "/api/mcp" }
+  ],
   "headers": [
     {
       "source": "/data/(.*)",
