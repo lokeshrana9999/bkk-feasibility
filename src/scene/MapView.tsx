@@ -144,6 +144,9 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
       if (started) return;
       started = true;
       clearTimeout(fallback);
+      // MapLibre opens the compact attribution at start; keep it folded into its (i) button so
+      // it never sits under the result chip (credits stay one click away and in the panel footer)
+      div.current?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
       map.addSource('zones', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({ id: 'zones-fill', type: 'fill', source: 'zones', paint: { 'fill-color': '#a0522d', 'fill-opacity': 0.07 } });
       map.addLayer({ id: 'zones-line', type: 'line', source: 'zones', paint: { 'line-color': '#8b4513', 'line-width': 1.4, 'line-opacity': 0.7, 'line-dasharray': [3, 2] } });
