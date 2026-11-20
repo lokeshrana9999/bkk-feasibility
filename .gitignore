@@ -11,3 +11,4 @@ sources/data/
 scratch/
 *.pdf
 .env.local
+__pycache__/
