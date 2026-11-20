@@ -132,4 +132,4 @@ Each fixed with a regression case (`test/regressions.test.ts`, `test/fixtures/ni
 | Relief granted although a corner building ran 61.7 m along the narrow road; checker refused relief on a densified outline | 60 m extent measured along the road's longest segment (a sawtooth tooth on the true outline) | extent measured along the road's end-to-end direction |
 | Envelope GFA differs between images by a few m2 to 22 m2 | a part exactly at the 1.5 m opening / 1.5 m thickness / 40 m2 line kept in one image, dropped in the other (both legal) | `Envelope.sliverArea` and `droppedArea` reported; M1 allows that difference; `courtyard-skipped` warning carries its margins |
 
-After these fixes the nightly suite passes (139 tests, ~7 min); per-push CI ~40 s.
+After these fixes the nightly suite passes (139 tests, ~7 min); per-push CI ~40 s. After the oracle-decision pass (2026-11-20): CI 149 tests (typecheck 2 s, tests 32 s), nightly 149 tests in 4.1 min, acceptance gate 92 tests, 72 fail on 3e2b5be, every Codex-tagged test among them.
