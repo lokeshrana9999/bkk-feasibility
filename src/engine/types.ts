@@ -42,6 +42,12 @@ export interface EngineInput {
   floorH?: { ground: number; typical: number };
   /** Apply MR 55 arts. 45-46 wider-road relief on corner / two-road plots (default true). */
   widerRoadRelief?: boolean;
+  /**
+   * Hotel room count (positive integer), for the zoning art. 16 (8) 80-room gate. When given,
+   * a hotel over 80 rooms without 12 m of frontage on a 12 m road or a station is not permitted
+   * (permitted GFA 0); when absent, rooms are estimated as GFA / PARAMS.hotelGfaPerRoom.
+   */
+  hotelRooms?: number;
 }
 
 export interface Frame {

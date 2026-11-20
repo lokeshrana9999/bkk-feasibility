@@ -151,6 +151,33 @@ describe('Codex review regressions', () => {
     expect(named.rules.find((x) => x.id === 'MR55-46')!.applies).toBe(true);
   });
 
+  it('D4 a hotel with a given room count: over 80 rooms without a 12 m road or station is not permitted (zoning art. 16 (8))', () => {
+    // was: no room input; rooms were estimated at 50 m2 GFA, so a 4,000 m2 hotel of 133 small
+    // rooms passed. Now the given count decides, as the text counts rooms.
+    const hotel = (extra: Partial<EngineInput>) => ok({ type: 'hotel', edges: [road(8), P, P, P], ...extra });
+    const banned = hotel({ hotelRooms: 133 });
+    expect(banned.regimes.low.permittedGfa).toBe(0);
+    expect(banned.regimes.low.limitedBy).toMatch(/133 rooms .*not permitted/);
+    expect(banned.designs).toEqual([]);
+    expect(banned.warnings.some((w) => w.code === 'use-not-permitted')).toBe(true);
+    expect(banned.rules.find((x) => x.id === 'Z16-HOTEL')!.value).toMatch(/not permitted/);
+    // the checker fails a hand-made design for it
+    const site = { ring: banned.plot.ring, chains: banned.chains, reliefPartners: banned.chains.map(() => []), zone: B.zone!, type: 'hotel' as const, nearStation: false, hotelRooms: 133 };
+    const rect: XY[] = [[-20, -10], [20, -10], [20, 10], [-20, 10]];
+    const plates: FloorPlate[] = [1, 2].map((k) => ({ level: k, z0: (k - 1) * 3, z1: k * 3, polygons: [[rect]], area: 800, dByChain: [] }));
+    expect(checkDesign(site, plates).checks.find((c) => c.id === 'hotel-gate')!.status).toBe('fail');
+    expect(checkDesign({ ...site, hotelRooms: 80 }, plates).checks.find((c) => c.id === 'hotel-gate')!.status).toBe('pass');
+    // 80 rooms: not banned, and no 4,000 m2 estimate cap
+    const small = hotel({ hotelRooms: 80 });
+    expect(small.regimes.low.caps.some((c) => c.id === 'Z16-HOTEL')).toBe(false);
+    expect(small.regimes.low.permittedGfa).toBeGreaterThan(4000);
+    expect(fails(small)).toEqual([]);
+    // a station waives the gate
+    expect(hotel({ hotelRooms: 133, nearStation: true }).regimes.low.permittedGfa).toBeGreaterThan(0);
+    // the count must be a positive whole number
+    for (const bad of [0, -3, 2.5, Number.NaN]) expect(evaluate({ ...B, type: 'hotel', hotelRooms: bad }).ok).toBe(false);
+  });
+
   it('#7 a high OSR no longer wipes out the high regime: footprint and GFA are solved together', () => {
     // was: high permitted 0 m2, low chosen. A legal 10,868 m2 tower exists (13 x 836 m2).
     const r = ok({ zone: { code: 'Y9', far: 20, osrPct: 10 } });

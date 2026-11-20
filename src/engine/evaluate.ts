@@ -3,7 +3,7 @@
 import { buildChains, chainLabel } from './chains.js';
 import { checkDesign, type CheckSite } from './checker.js';
 import { buildDesigns } from './designs.js';
-import { buildHigh, buildLow, highGate, roadFacts, type Site } from './envelope.js';
+import { buildHigh, buildLow, highGate, hotelBanLabel, roadFacts, type Site } from './envelope.js';
 import { cleanPlot } from './frame.js';
 import type { Paths64 } from 'clipper2-ts';
 import { and, bufferLine, or, toPath } from './geom.js';
@@ -115,7 +115,11 @@ function appliedRules(site: Site, chosen: Envelope, low: Envelope, high: Envelop
     'Z16-FAR': [`zone ${site.zone.code}: FAR ${site.zone.far} -> GFA <= ${n(site.zone.far * A)} m2`, true],
     'Z16-OSR': [`open space >= ${site.zone.osrPct}% of GFA (${n((site.zone.osrPct / 100) * chosen.permittedGfa)} m2 at ${n(chosen.permittedGfa)} m2)`, true],
     'Z16-PERM': ['not assessed', true],
-    'Z16-HOTEL': [site.type === 'hotel' ? (site.nearStation || rf.hotelRoad ? 'waived (12 m frontage on a 12 m road, or station)' : `<= 80 rooms (~${n(PARAMS.hotelGateRooms * PARAMS.hotelGfaPerRoom, 0)} m2)`) : 'not a hotel', site.type === 'hotel'],
+    'Z16-HOTEL': [site.type !== 'hotel' ? 'not a hotel'
+      : site.nearStation || rf.hotelRoad ? 'waived (12 m frontage on a 12 m road, or station)'
+      : site.hotelRooms === undefined ? `<= 80 rooms (~${n(PARAMS.hotelGateRooms * PARAMS.hotelGfaPerRoom, 0)} m2 at ${PARAMS.hotelGfaPerRoom} m2 per room)`
+      : site.hotelRooms > PARAMS.hotelGateRooms ? hotelBanLabel(site.hotelRooms)
+      : `${site.hotelRooms} rooms (given): not over 80, not banned`, site.type === 'hotel'],
     'Z16-OFFICE': [site.type === 'office' ? (site.nearStation || rf.officeRoad ? 'waived (16 m frontage on a 16 m road, or station)' : '<= 10,000 m2') : 'not an office', site.type === 'office'],
     'ORD52-OPEN': [`${tp.dwelling ? 30 : 10}% of plot = ${n((tp.dwelling ? 0.3 : 0.1) * A)} m2 (${tp.label}${site.type === 'hotel' ? ', non-dwelling call' : ''})`, true],
     'MR33-6': [`${tp.dwelling ? 30 : 10}% of plot (same as above)`, chosen.regime === 'high'],
@@ -159,6 +163,9 @@ function validate(input: unknown): EngineError | null {
     }
   }
   if (i.widerRoadRelief !== undefined && typeof i.widerRoadRelief !== 'boolean') return fail('invalid-input', 'widerRoadRelief must be a boolean');
+  if (i.hotelRooms !== undefined && !(isNum(i.hotelRooms) && Number.isInteger(i.hotelRooms) && i.hotelRooms > 0)) {
+    return fail('invalid-input', 'hotelRooms must be a positive whole number');
+  }
   return null;
 }
 
@@ -205,6 +212,7 @@ function run(input: EngineInput): EngineOutput {
     type: input.type,
     zone: { code: input.zone!.code, far: input.zone!.far, osrPct: input.zone!.osrPct },
     nearStation: input.nearStation,
+    ...(input.type === 'hotel' && input.hotelRooms !== undefined ? { hotelRooms: input.hotelRooms } : {}),
     // simplification moved the boundary by up to this much: every setback is cut that much deeper
     extraMargin: plot.simplifyDev,
     bufCache: new Map(),
@@ -220,17 +228,21 @@ function run(input: EngineInput): EngineOutput {
   const pick = chosen === 'high' ? high : low;
 
   // the checker measures against the true outline, even when the geometry used a simplified one
+  const rooms = site.hotelRooms !== undefined ? { hotelRooms: site.hotelRooms } : {};
   const checkSite: CheckSite = plot.original && trueChains
     ? {
         ring: plot.original.ring, chains: trueChains, reliefPartners: reliefPartners(trueChains, input.widerRoadRelief !== false),
-        zone: site.zone, type: site.type, nearStation: site.nearStation,
+        zone: site.zone, type: site.type, nearStation: site.nearStation, ...rooms,
       }
-    : { ring: plot.ring, chains, reliefPartners: partners, zone: site.zone, type: site.type, nearStation: site.nearStation };
-  const designs: Design[] = buildDesigns(site, chosen, pick.paths, pick.env.plates, pick.env.caps, warnings).map((d) => {
+    : { ring: plot.ring, chains, reliefPartners: partners, zone: site.zone, type: site.type, nearStation: site.nearStation, ...rooms };
+  // a use the zoning bans on this plot (a hotel over 80 rooms, room count given) permits 0 m2: no design
+  const banned = pick.env.caps.find((c) => c.id === 'Z16-HOTEL' && c.value === 0);
+  if (banned) warnings.push({ code: 'use-not-permitted', message: `${RULES['Z16-HOTEL']!.article}: ${banned.label}` });
+  const designs: Design[] = (banned ? [] : buildDesigns(site, chosen, pick.paths, pick.env.plates, pick.env.caps, warnings)).map((d) => {
     const { checks } = checkDesign(checkSite, d.plates);
     return { ...d, checks, passes: checks.every((c) => c.status !== 'fail') };
   });
-  if (pick.env.plates.length > 0 && designs.length < 2) {
+  if (pick.env.plates.length > 0 && designs.length < 2 && !banned) {
     warnings.push({ code: 'few-designs', message: `only ${designs.length} design fits this envelope` });
   }
   if (!highGate(site).ok && low.env.plates.length > 0) {

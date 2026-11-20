@@ -28,6 +28,8 @@ export interface Site {
   type: BuildingType;
   zone: ZoneInfo;
   nearStation: boolean;
+  /** Hotel room count when the caller gives it (zoning art. 16 (8)); else estimated from GFA. */
+  hotelRooms?: number;
   /** Extra cut width (m) on top of PARAMS.safety: how far simplification moved the boundary. */
   extraMargin: number;
   bufCache: Map<string, Paths64>;
@@ -205,6 +207,11 @@ export function roadFacts(chains: Chain[]): RoadFacts {
   return { widestGateRoad, widestRoad, officeRoad, hotelRoad };
 }
 
+/** Why a hotel with this many rooms is not permitted on this plot (zoning art. 16 (8)). */
+export function hotelBanLabel(rooms: number): string {
+  return `hotel with ${rooms} rooms (over ${PARAMS.hotelGateRooms}) not permitted: needs ${PARAMS.hotelGateWidth} m of frontage on a ${PARAMS.hotelGateWidth} m road, or a station within 500 m`;
+}
+
 /** GFA caps that do not depend on geometry (FAR, gates, zoning bans). */
 export function fixedCaps(site: Site, regime: Regime): Cap[] {
   const A = site.plotArea;
@@ -222,7 +229,12 @@ export function fixedCaps(site: Site, regime: Regime): Cap[] {
     if (site.type === 'office' && !rf.officeRoad) {
       caps.push({ id: 'Z16-OFFICE', label: 'office without 16 m of frontage on a 16 m road, or a station: 10,000 m2', value: PARAMS.officeGateGfa });
     }
-    if (site.type === 'hotel' && !rf.hotelRoad) {
+    if (site.type === 'hotel' && !rf.hotelRoad && site.hotelRooms !== undefined) {
+      // the room count is given: the gate applies to it exactly (oracle disagreement D4)
+      if (site.hotelRooms > PARAMS.hotelGateRooms) {
+        caps.push({ id: 'Z16-HOTEL', label: hotelBanLabel(site.hotelRooms), value: 0 });
+      }
+    } else if (site.type === 'hotel' && !rf.hotelRoad) {
       caps.push({
         id: 'Z16-HOTEL',
         label: `hotel without 12 m of frontage on a 12 m road, or a station: 80 rooms x ${PARAMS.hotelGfaPerRoom} m2`,

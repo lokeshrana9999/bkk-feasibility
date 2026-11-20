@@ -422,7 +422,26 @@ describe('oracle differential: gates and caps (engine permits => oracle permits;
     diff.done();
   });
 
-  it('D4 (documented, not comparable): with 30 m2 of GFA per room the engine admits more than 80 rooms where the oracle bans them', () => {
+  it('hotel rooms given (D4): the 80-room gate on the room count, engine permits => oracle permits', () => {
+    const diff = new Diff('hotel rooms given');
+    for (const ps of SETS) for (const nearStation of [false, true]) for (const rooms of [1, 79, 80, 81, 133, 500]) {
+      const s = { ...engineSite(ps, 5000, 7, 'hotel', nearStation), hotelRooms: rooms } as Env.Site;
+      const fs = frontagesOf(ps);
+      const cap = Env.fixedCaps(s, 'low').find((c) => c.id === 'Z16-HOTEL');
+      // with a room count the GFA estimate is not used: the cap is 0 (banned) or absent
+      expect(cap === undefined || cap.value === 0, `hotel cap ${cap?.value} with ${rooms} rooms`).toBe(true);
+      if (cap) continue; // engine refuses the hotel: stricter or equal
+      for (const G of [1000, 4000, 9999]) {
+        diff.case();
+        const b: O.Building = { use: 'hotel', heightM: 22.9, storeys: 7, gfaM2: G, largestFloorM2: G / 7 };
+        const blocks = (f: O.Frontage[]) => blocking(O.gates(b, f, nearStation, rooms).reasons).filter((r) => r.cite === 'mr2556.txt:1412');
+        if (blocks(fs).length) diff.lax(`hotel ${rooms} rooms ${G} m2, ${descr(ps)}${nearStation ? ', station' : ''}: engine permits, oracle blocks`, explain(fs, ['D2'], (f) => blocks(f).length === 0));
+      }
+    }
+    diff.done();
+  });
+
+  it('D4 (documented, not comparable without a room count): with 30 m2 of GFA per room the engine admits more than 80 rooms where the oracle bans them', () => {
     const s = engineSite([{ W: 8, L: 40, g: 0 }], 5000, 7, 'hotel', false);
     const cap = Env.fixedCaps(s, 'low').find((c) => c.id === 'Z16-HOTEL')!.value;
     expect(cap).toBe(4000);

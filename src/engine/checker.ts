@@ -22,6 +22,8 @@ export interface CheckSite {
   zone: ZoneInfo;
   type: BuildingType;
   nearStation: boolean;
+  /** Hotel room count when the caller gives it (zoning art. 16 (8)); else estimated from GFA. */
+  hotelRooms?: number;
 }
 
 export interface Measured {
@@ -268,7 +270,17 @@ export function checkDesign(site: CheckSite, plates: FloorPlate[]): { checks: Ch
     const ok = ms.gfa <= PARAMS.officeGateGfa || officeRoad || site.nearStation;
     checks.push(row('office-gate', 'Z16-OFFICE', 'Office over 10,000 m2 needs 16 m of frontage on a 16 m road, or a station', '<= 10,000 m2, or 16 m frontage on a 16 m road, or station', `${m2(ms.gfa)}, widest road ${widestRoad} m${officeRoad ? ' (16 m frontage)' : ''}${site.nearStation ? ', near station' : ''}`, ok ? 'pass' : 'fail'));
   }
-  if (site.type === 'hotel') {
+  if (site.type === 'hotel' && site.hotelRooms !== undefined) {
+    // the room count is given: the zoning art. 16 (8) gate on rooms exactly (oracle D4)
+    const rooms = site.hotelRooms;
+    const ok = rooms <= PARAMS.hotelGateRooms || hotelRoad || site.nearStation;
+    checks.push(row(
+      'hotel-gate', 'Z16-HOTEL', 'Hotel over 80 rooms needs 12 m of frontage on a 12 m road, or a station',
+      '<= 80 rooms, or 12 m frontage on a 12 m road, or station',
+      `${rooms} rooms (given), widest road ${widestRoad} m${hotelRoad ? ' (12 m frontage)' : ''}${site.nearStation ? ', near station' : ''}`,
+      ok ? 'pass' : 'fail', ok ? undefined : 'zoning art. 16 (8): a hotel of this size is not permitted on this plot',
+    ));
+  } else if (site.type === 'hotel') {
     // the same cap as the engine (envelope.ts fixedCaps): 80 rooms x 50 m2 = 4,000 m2 of GFA
     const cap = PARAMS.hotelGateRooms * PARAMS.hotelGfaPerRoom;
     const ok = ms.gfa <= cap + AREA_EPS || hotelRoad || site.nearStation;
