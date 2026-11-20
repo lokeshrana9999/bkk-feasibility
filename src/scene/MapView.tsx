@@ -61,7 +61,6 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
   useEffect(() => {
     const map = new maplibregl.Map({
       container: div.current!,
-      style: STYLE,
       center: START,
       zoom: 16.4,
       pitch: 55,
@@ -70,23 +69,24 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref)
       attributionControl: false,
       canvasContextAttributes: { antialias: true },
     });
+    // drop the basemap's US highway-shield layers (filters that warn on Bangkok data) and its
+    // flat buildings (deck.gl draws the real ones in 3D)
+    map.setStyle(STYLE, {
+      transformStyle: (_prev, next) => ({ ...next, layers: next.layers.filter((l) => !/shield|building/i.test(l.id)) }),
+    });
     mapRef.current = map;
+    if (import.meta.env.DEV) (window as unknown as { __map: MLMap }).__map = map;
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
     map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
     map.addControl(
       new maplibregl.AttributionControl({
         compact: true,
-        customAttribution:
-          'Zoning & right-of-way: BMA city planning GIS (DOL map sheets) · Buildings: © OpenStreetMap contributors, Overture Maps Foundation, Google Open Buildings (CC BY 4.0)',
+        customAttribution: 'BMA planning GIS · © OpenStreetMap · Overture Maps · Google Open Buildings (CC BY 4.0)',
       }),
       'bottom-right',
     );
 
     map.on('load', () => {
-      // the basemap's own buildings would double up with the deck.gl ones
-      for (const l of map.getStyle().layers ?? []) {
-        if (/building/i.test(l.id)) map.setLayoutProperty(l.id, 'visibility', 'none');
-      }
       map.addSource('zones', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({ id: 'zones-fill', type: 'fill', source: 'zones', paint: { 'fill-color': '#a0522d', 'fill-opacity': 0.07 } });
       map.addLayer({ id: 'zones-line', type: 'line', source: 'zones', paint: { 'line-color': '#8b4513', 'line-width': 1.4, 'line-opacity': 0.7, 'line-dasharray': [3, 2] } });

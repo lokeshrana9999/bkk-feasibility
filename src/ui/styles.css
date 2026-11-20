@@ -176,6 +176,8 @@ blockquote { margin: 0 0 10px 70px; padding: 8px 10px; background: #fafafa; bord
 
 .map-hint { z-index: 3; position: absolute; top: 14px; left: 50%; transform: translateX(-50%); background: rgba(20,23,31,.88); color: #fff; padding: 8px 14px; border-radius: 999px; font-size: 13px; pointer-events: none; max-width: calc(100% - 32px); text-align: center; }
 .legend { z-index: 3; position: absolute; left: 12px; top: 12px; background: rgba(255,255,255,.95); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; font-size: 12.5px; box-shadow: 0 2px 10px rgba(20,23,31,.06); display: flex; flex-direction: column; gap: 3px; }
+.legend summary { cursor: pointer; font-weight: 600; color: var(--ink2); font-size: 12px; list-style-position: inside; }
+.legend[open] summary { margin-bottom: 3px; }
 .lg-item { display: flex; align-items: center; gap: 7px; color: var(--ink2); cursor: pointer; }
 .lg-item.disabled { opacity: .45; cursor: default; }
 .sw { width: 14px; height: 10px; border-radius: 3px; border: 1px solid rgba(0,0,0,.12); }

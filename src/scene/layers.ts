@@ -90,7 +90,14 @@ function twoXPlanes(frame: Frame, plotRing: XY[], chains: Chain[], topZ: number)
   return out;
 }
 
+const SKIP = import.meta.env.DEV ? new URLSearchParams(location.search).get('skip')?.split(',') ?? [] : [];
+
 export function buildLayers(s: SceneState): Layer[] {
+  // an empty extruded layer draws its walls with instanceCount -1 (GL_INVALID_VALUE warnings)
+  return build(s).filter((l) => !SKIP.includes(l.id) && !(Array.isArray(l.props.data) && l.props.data.length === 0));
+}
+
+function build(s: SceneState): Layer[] {
   const layers: Layer[] = [];
   const r = s.result;
 
@@ -146,6 +153,7 @@ export function buildLayers(s: SceneState): Layer[] {
   if (!r) return layers;
   const chosen = r.regimes[r.regimes.chosen];
   const other = r.regimes[r.regimes.chosen === 'low' ? 'high' : 'low'];
+  const d0 = r.designs[s.design];
 
   if (s.showGhost && other.allowed && other.plates.length) {
     layers.push(
@@ -168,7 +176,7 @@ export function buildLayers(s: SceneState): Layer[] {
         extruded: true,
         getPolygon: (d) => d.polygon,
         getElevation: (d) => d.h,
-        getFillColor: [60, 128, 246, 34],
+        getFillColor: [60, 128, 246, d0 ? 10 : 22],
         material: false,
         parameters: { depthWriteEnabled: false },
       }),
@@ -176,25 +184,27 @@ export function buildLayers(s: SceneState): Layer[] {
         id: 'envelope-outlines',
         data: outlines(r.frame, chosen.plates),
         getPath: (d: { path: V3[] }) => d.path,
-        getColor: [44, 108, 230, 170],
+        getColor: [44, 108, 230, d0 ? 120 : 170],
         getWidth: 1,
         widthUnits: 'pixels',
       }),
     );
   }
 
-  const d: Design | undefined = r.designs[s.design];
+  const d: Design | undefined = d0;
   if (d) {
+    // floors drawn as slabs with a thin gap, so storeys read; podium / ground floor darker
     layers.push(
       new SolidPolygonLayer<Slab>({
         id: 'design',
-        data: slabs(r.frame, d.plates, 0.22),
+        data: slabs(r.frame, d.plates, 0.35),
         extruded: true,
         getPolygon: (x) => x.polygon,
         getElevation: (x) => x.h,
-        getFillColor: (x) => (x.level <= 1 ? [214, 196, 168, 255] : [246, 242, 234, 255]),
-        material: { ambient: 0.5, diffuse: 0.7, shininess: 24, specularColor: [60, 60, 60] },
+        getFillColor: (x) => (x.level === 1 ? [168, 120, 72, 255] : x.level <= 3 && d.kind === 'tower-podium' ? [222, 186, 140, 255] : [250, 232, 205, 255]),
+        material: { ambient: 0.45, diffuse: 0.75, shininess: 32, specularColor: [70, 60, 50] },
         pickable: true,
+        updateTriggers: { getFillColor: d.id },
       }),
     );
   }

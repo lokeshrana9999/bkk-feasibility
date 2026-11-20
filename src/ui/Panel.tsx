@@ -122,7 +122,7 @@ export function Panel(p: Props) {
         </details>
       </Section>
 
-      {p.edges.length > 0 && (
+      {p.edges.length > 0 && p.zoneHit && (
         <Section title="Plot edges" aside={p.hasRowData ? 'roads detected from city right-of-way map' : 'no city road data here: mark roads by hand'}>
           <EdgeTable edges={p.edges} setOverride={p.setOverride} hover={p.hoverEdge} setHover={p.setHoverEdge} />
         </Section>

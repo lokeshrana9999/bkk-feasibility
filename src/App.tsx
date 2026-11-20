@@ -93,6 +93,17 @@ export default function App() {
     mapRef.current?.setPlot(initial.ring ?? DEMOS[0]!.ring, true);
   }, [mapReady, zones.length > 0]);
 
+  // a share link pasted into this tab (replaceState writes do not fire hashchange)
+  useEffect(() => {
+    const on = () => {
+      const h = readHash();
+      if (h.type) setType(h.type);
+      if (h.ring) mapRef.current?.setPlot(h.ring, true);
+    };
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, []);
+
   // overrides belong to edges; a different vertex count means different edges
   const prevN = useRef(0);
   const onRing = useCallback((r: LL[] | null) => {
@@ -165,8 +176,11 @@ export default function App() {
     clientRef.current?.run(input);
   }, [input]);
 
+  // share link, written once edits settle (not on every drag frame)
   useEffect(() => {
-    if (!drawing) writeHash(ring, type);
+    if (drawing) return;
+    const t = setTimeout(() => writeHash(ring, type), 600);
+    return () => clearTimeout(t);
   }, [ring, type, drawing]);
 
   // keep the selected design valid
@@ -286,7 +300,8 @@ function Legend({ view, setView, hasGhost }: { view: ViewToggles; setView: (v: V
     </label>
   );
   return (
-    <div className="legend">
+    <details className="legend" open={window.innerWidth > 860}>
+      <summary>Layers</summary>
       {item('envelope', 'Allowed envelope', 'rgba(60,128,246,.35)')}
       {item('ghost', 'Other regime (outline)', 'transparent', !hasGhost)}
       {item('twoX', '2:1 road plane', 'rgba(255,104,56,.4)')}
@@ -297,6 +312,6 @@ function Legend({ view, setView, hasGhost }: { view: ViewToggles; setView: (v: V
         <span><i style={{ background: 'rgb(36,132,220)' }} />canal</span>
         <span><i style={{ background: 'rgb(120,124,132)' }} />private</span>
       </div>
-    </div>
+    </details>
   );
 }
