@@ -2935,6 +2935,7 @@ function hashOf(st) {
   if (st.station) parts.push("s=1");
   if (!st.relief) parts.push("rl=0");
   if (st.floorH) parts.push(`fh=${st.floorH.ground}x${st.floorH.typical}`);
+  if (st.type === "hotel" && st.hotelRooms) parts.push(`hr=${st.hotelRooms}`);
   return `#${parts.join("&")}`;
 }
 
@@ -2976,7 +2977,7 @@ function readRing(raw, units) {
       return fail2("invalid-input", `ring[${i}] is not a [lon, lat] pair in degrees (lon first)`, { index: i });
     }
   }
-  const ring2 = openRing(raw);
+  const ring2 = openRing(units === "lonlat" ? raw.map((p) => [Number(p[0].toFixed(7)), Number(p[1].toFixed(7))]) : raw);
   if (ring2.length < 3) return fail2("too-few-points", `a plot needs at least 3 corners (got ${ring2.length})`);
   if (ring2.length > MAX_VERTICES) return fail2("too-many-vertices", `plot has ${ring2.length} corners; the limit is ${MAX_VERTICES}`);
   if (selfIntersects(ring2)) return fail2("self-intersection", "the plot outline crosses itself");
@@ -3032,6 +3033,10 @@ async function site(ctx, drawn) {
     return l ? { ...e, label: l } : e;
   });
   return { drawn, zone: zs.hit.zone, share: zs.hit.share, others: zs.others, area: area2, prep, edges };
+}
+var LINK_NOTE = "Opens the web app on this plot in 3D with the same inputs (outline, building type, edge overrides, station, relief, floor heights, hotel rooms) and so the same figures. Everything is in the part after #; nothing is stored on a server.";
+function appLink(ctx, st) {
+  return `${ctx.appUrl}/${hashOf(st)}`;
 }
 var edgeRows = (ring2, edges) => edges.map((e, i) => ({
   index: i,
@@ -3182,6 +3187,8 @@ function detectRoads(ctx, ringIn) {
       edges: edgeRows(p.ring, s.edges),
       roads: s.edges.map((e, i) => ({ e, i })).filter(({ e }) => e.role !== "private").map(({ e, i }) => ({ index: i, role: e.role, widthM: e.width, gapM: e.gap ?? 0, ...e.label ? { label: e.label } : {} })),
       note: "Edges are those of buildableRing: the drawn plot, snapped to a right-of-way within 1.5 m and with any part on the right-of-way cut away. Widths are measured across the city right-of-way polygons. Pass corrections to evaluate_plot as edges: [{ index, role, width, gap }].",
+      appLink: appLink(ctx, { ring: rr.ring, type: "condo", edges: {}, station: false, relief: true, floorH: null }),
+      appLinkNote: "Opens the plot in the 3D web app as a condo with the detected roads; evaluate_plot returns a shareLink carrying every option. Nothing is stored on a server.",
       disclaimer: DISCLAIMER
     };
   });
@@ -3279,7 +3286,7 @@ function evaluatePlot(ctx, a) {
         removedOnRightOfWayM2: r2(s2.prep.removed),
         ...s2.prep.snaps.length ? { snappedEdges: s2.prep.snaps.map((x) => ({ drawnEdge: x.edge, byM: r2(x.by) })) } : {}
       };
-      shareLink = `${ctx.appUrl}/${hashOf({ ring: rr.ring, type: a.buildingType, edges: ov.map, station, relief, floorH: a.floorHeights ?? null })}`;
+      shareLink = appLink(ctx, { ring: rr.ring, type: a.buildingType, edges: ov.map, station, relief, floorH: a.floorHeights ?? null, hotelRooms: a.hotelRooms ?? null });
     } else {
       if (a.zone === void 0) return fail2("invalid-input", 'units "m" needs zone (eg "Y9-23"): a plot in metres has no location');
       const z2 = resolveZoneCode(await ctx.data.zonesY9(), a.zone);
@@ -3325,7 +3332,7 @@ function evaluatePlot(ctx, a) {
       rulesNotApplied: s.rulesNotApplied,
       warnings: s.warnings,
       shareLink,
-      ...shareLink ? {} : { shareLinkNote: "No share link for a plot in metres (it has no location)." }
+      shareLinkNote: shareLink ? LINK_NOTE : "No share link for a plot in metres: it has no place on the map. Give the plot as [lon, lat] corners to get one."
     };
   });
 }
@@ -3417,6 +3424,7 @@ ${TOOLS.map(([n, i, r]) => `<tr><td><code>${n}</code></td><td>${esc(i)}</td><td>
 </table>
 <p>Resource <code>rules://y9</code>: the full cited rule table. Prompt <code>feasibility_report</code>: a short report for a plot, using the tools.</p>
 <p class="mut">Typical flow: <code>find_zone</code> \u2192 <code>detect_roads</code> (check the widths; pass corrections as <code>edges: [{index, role, width, gap}]</code>) \u2192 <code>evaluate_plot</code> \u2192 open its <code>shareLink</code> to see the plot in 3D.</p>
+<p class="mut"><code>shareLink</code> opens the web app on the same plot with the same inputs (edge overrides, station, relief, floor heights, hotel rooms) and so the same figures. Nothing is stored: the whole state sits in the URL after <code>#</code>.</p>
 
 <h2>Scope and limits</h2>
 <ul>

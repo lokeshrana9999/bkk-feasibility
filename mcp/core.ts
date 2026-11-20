@@ -105,7 +105,9 @@ export function readRing(raw: unknown, units: 'lonlat' | 'm'): { ok: true; ring:
       return fail('invalid-input', `ring[${i}] is not a [lon, lat] pair in degrees (lon first)`, { index: i });
     }
   }
-  const ring = openRing(raw as LL[]);
+  // lon/lat is rounded to 7 decimals (~1 cm), exactly as the share link writes it, so the web app
+  // opened from the link evaluates the very same outline
+  const ring = openRing(units === 'lonlat' ? (raw as LL[]).map((p) => [Number(p[0].toFixed(7)), Number(p[1].toFixed(7))] as LL) : (raw as LL[]));
   if (ring.length < 3) return fail('too-few-points', `a plot needs at least 3 corners (got ${ring.length})`);
   if (ring.length > MAX_VERTICES) return fail('too-many-vertices', `plot has ${ring.length} corners; the limit is ${MAX_VERTICES}`);
   if (selfIntersects(ring)) return fail('self-intersection', 'the plot outline crosses itself');
@@ -187,6 +189,14 @@ async function site(ctx: Ctx, drawn: LL[]): Promise<Site | ToolError> {
     return l ? { ...e, label: l } : e;
   });
   return { drawn, zone: zs.hit.zone, share: zs.hit.share, others: zs.others, area, prep, edges };
+}
+
+const LINK_NOTE =
+  'Opens the web app on this plot in 3D with the same inputs (outline, building type, edge overrides, station, relief, floor heights, hotel rooms) and so the same figures. Everything is in the part after #; nothing is stored on a server.';
+
+/** Web app URL that reproduces an evaluation: the app's own share-link hash (src/ui/state.ts). */
+function appLink(ctx: Ctx, st: Parameters<typeof hashOf>[0]): string {
+  return `${ctx.appUrl}/${hashOf(st)}`;
 }
 
 const edgeRows = (ring: LL[], edges: { role: EdgeRole; width?: number; gap?: number; label?: string; source: string; length: number }[]) =>
@@ -358,6 +368,8 @@ export function detectRoads(ctx: Ctx, ringIn: unknown) {
         .filter(({ e }) => e.role !== 'private')
         .map(({ e, i }) => ({ index: i, role: e.role, widthM: e.width, gapM: e.gap ?? 0, ...(e.label ? { label: e.label } : {}) })),
       note: 'Edges are those of buildableRing: the drawn plot, snapped to a right-of-way within 1.5 m and with any part on the right-of-way cut away. Widths are measured across the city right-of-way polygons. Pass corrections to evaluate_plot as edges: [{ index, role, width, gap }].',
+      appLink: appLink(ctx, { ring: rr.ring, type: 'condo', edges: {}, station: false, relief: true, floorH: null }),
+      appLinkNote: 'Opens the plot in the 3D web app as a condo with the detected roads; evaluate_plot returns a shareLink carrying every option. Nothing is stored on a server.',
       disclaimer: DISCLAIMER,
     };
   });
@@ -473,7 +485,7 @@ export function evaluatePlot(ctx: Ctx, a: EvaluateArgs) {
         removedOnRightOfWayM2: r2(s.prep.removed),
         ...(s.prep.snaps.length ? { snappedEdges: s.prep.snaps.map((x) => ({ drawnEdge: x.edge, byM: r2(x.by) })) } : {}),
       };
-      shareLink = `${ctx.appUrl}/${hashOf({ ring: rr.ring, type: a.buildingType, edges: ov.map, station, relief, floorH: a.floorHeights ?? null })}`;
+      shareLink = appLink(ctx, { ring: rr.ring, type: a.buildingType, edges: ov.map, station, relief, floorH: a.floorHeights ?? null, hotelRooms: a.hotelRooms ?? null });
     } else {
       // abstract plot in metres: no map, so the zone and the roads come from the caller
       if (a.zone === undefined) return fail('invalid-input', 'units "m" needs zone (eg "Y9-23"): a plot in metres has no location');
@@ -521,7 +533,7 @@ export function evaluatePlot(ctx: Ctx, a: EvaluateArgs) {
       rulesNotApplied: s.rulesNotApplied,
       warnings: s.warnings,
       shareLink,
-      ...(shareLink ? {} : { shareLinkNote: 'No share link for a plot in metres (it has no location).' }),
+      shareLinkNote: shareLink ? LINK_NOTE : 'No share link for a plot in metres: it has no place on the map. Give the plot as [lon, lat] corners to get one.',
     };
   });
 }

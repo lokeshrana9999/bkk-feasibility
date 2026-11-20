@@ -72,6 +72,7 @@ ${TOOLS.map(([n, i, r]) => `<tr><td><code>${n}</code></td><td>${esc(i)}</td><td>
 </table>
 <p>Resource <code>rules://y9</code>: the full cited rule table. Prompt <code>feasibility_report</code>: a short report for a plot, using the tools.</p>
 <p class="mut">Typical flow: <code>find_zone</code> → <code>detect_roads</code> (check the widths; pass corrections as <code>edges: [{index, role, width, gap}]</code>) → <code>evaluate_plot</code> → open its <code>shareLink</code> to see the plot in 3D.</p>
+<p class="mut"><code>shareLink</code> opens the web app on the same plot with the same inputs (edge overrides, station, relief, floor heights, hotel rooms) and so the same figures. Nothing is stored: the whole state sits in the URL after <code>#</code>.</p>
 
 <h2>Scope and limits</h2>
 <ul>

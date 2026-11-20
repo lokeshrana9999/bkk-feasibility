@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { BuildingType, CheckRow, Design, EdgeRole, EngineError, EngineResult, Envelope, FloorPlate } from '../engine/types';
-import { TYPE_PARAMS } from '../engine/rules';
+import { PARAMS, TYPE_PARAMS } from '../engine/rules';
 import type { Area } from '../site/data';
 import type { LL } from '../site/geo';
 import type { Prepared } from '../site/prep';
 import type { ZoneState } from '../site/zone';
-import { DEMOS, TYPES, fmt, type EdgeOverride, type UiEdge } from './state';
+import { DEMOS, MAX_HOTEL_ROOMS, TYPES, fmt, type EdgeOverride, type UiEdge } from './state';
 import { makeTidy, type Tidy } from './labels';
 import { Search } from './Search';
 
@@ -32,6 +32,8 @@ interface Props {
   setRelief: (v: boolean) => void;
   floorH: { ground: number; typical: number } | null;
   setFloorH: (v: { ground: number; typical: number } | null) => void;
+  hotelRooms: number | null;
+  setHotelRooms: (v: number | null) => void;
   result: EngineResult | null;
   engineError: EngineError | null;
   ms: number | null;
@@ -139,7 +141,7 @@ export function Panel(p: Props) {
             <button key={t.id} className={p.type === t.id ? 'on' : ''} onClick={() => p.setType(t.id)}>{t.label}</button>
           ))}
         </div>
-        <details className="opts" open={p.nearStation || !p.relief || !!p.floorH}>
+        <details className="opts" open={p.nearStation || !p.relief || !!p.floorH || (p.type === 'hotel' && !!p.hotelRooms)}>
           <summary>Options</summary>
           <label className="chk"><input type="checkbox" checked={p.nearStation} onChange={(e) => p.setNearStation(e.target.checked)} /> Within 500 m of a BTS/MRT station (waives the office/hotel road-width gates)</label>
           <label className="chk"><input type="checkbox" checked={p.relief} onChange={(e) => p.setRelief(e.target.checked)} /> Apply wider-road relief on corner plots (MR 55 arts. 45-46)</label>
@@ -150,6 +152,7 @@ export function Panel(p: Props) {
               onChange={(v) => p.setFloorH({ ground: p.floorH?.ground ?? TYPE_PARAMS[p.type].floorH.ground, typical: v })} />
             {p.floorH && <button className="link" onClick={() => p.setFloorH(null)}>reset</button>}
           </div>
+          {p.type === 'hotel' && <RoomsField value={p.hotelRooms} onChange={p.setHotelRooms} />}
         </details>
       </Section>
 
@@ -310,6 +313,40 @@ function NumField({ label, value, onChange, min, max }: { label: string; value: 
       <span>{label}</span>
       <input {...n.props} />
       {n.bad && <small className="err-txt">{min}-{max} m</small>}
+    </label>
+  );
+}
+
+/** Hotel room count for the zoning art. 16 (8) 80-room gate; empty = estimated from floor area. */
+function RoomsField({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  const [txt, setTxt] = useState<string | null>(null);
+  const parse = (s: string) => (/^\d{1,6}$/.test(s.trim()) && Number(s) >= 1 && Number(s) <= MAX_HOTEL_ROOMS ? Number(s) : null);
+  const bad = txt !== null && txt.trim() !== '' && parse(txt) === null;
+  const commit = (s: string) => {
+    if (s.trim() === '') onChange(null);
+    else if (parse(s) !== null) onChange(parse(s));
+  };
+  return (
+    <label className={`numf${bad ? ' bad' : ''}`}>
+      <span>Hotel rooms (empty: {PARAMS.hotelGfaPerRoom} m² of floor area per room)</span>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={1}
+        max={MAX_HOTEL_ROOMS}
+        step={1}
+        value={txt ?? (value === null ? '' : String(value))}
+        aria-invalid={bad}
+        onChange={(e) => setTxt(e.target.value)}
+        onBlur={(e) => {
+          commit(e.target.value);
+          setTxt(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        }}
+      />
+      {bad && <small className="err-txt">1-{MAX_HOTEL_ROOMS.toLocaleString('en-US')} rooms</small>}
     </label>
   );
 }

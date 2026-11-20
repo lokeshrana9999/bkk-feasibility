@@ -23,6 +23,10 @@ Also: resource `rules://y9` (the full cited rule table) and prompt `feasibility_
 
 Rings are `[lon, lat]` pairs, longitude first, open or closed, 3-500 corners, at most 200,000 m². Edge overrides use the edge indices `detect_roads` lists: `edges: [{ "index": 0, "role": "road", "width": 12, "gap": 0 }]`. `units: "m"` evaluates an abstract plot in metres (give `zone` and the road edges yourself; no share link). Bad input returns a typed error (`too-few-points`, `too-many-vertices`, `too-large`, `self-intersection`, `invalid-override`, `outside-scope` with the zone found, ...). Rate limit: 60 requests per minute per client (per function instance).
 
+### Open the result in the 3D app
+
+`evaluate_plot` returns `shareLink`, a web-app URL that opens the plot in 3D with the same inputs and so the same figures. No database: the whole state is in the URL fragment, in the app's own share format (`#p=lon,lat;...&t=type&e=edge overrides&s=station&rl=relief&fh=floor heights&hr=hotel rooms`), and the app rebuilds everything from it. The MCP evaluates the outline rounded to 7 decimals (about 1 cm), exactly as the link writes it, so the app and the MCP compute from the same corners; `test-mcp` checks the link alone reproduces each evaluation. `detect_roads` also returns an `appLink` (condo, detected roads). A plot given in metres has no share link, since it has no place on the map.
+
 ### Connect
 
 Claude Code:

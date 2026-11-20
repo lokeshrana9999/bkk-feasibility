@@ -98,6 +98,7 @@ export const DEMOS: Demo[] = [
  *   s  = 1                      within 500 m of a station
  *   rl = 0                      wider-road relief off
  *   fh = 4.5x3.2                floor-to-floor heights, ground x typical
+ *   hr = 120                    hotel room count (hotels only; else rooms are estimated from GFA)
  */
 export interface HashState {
   ring?: LL[];
@@ -106,6 +107,7 @@ export interface HashState {
   station?: boolean;
   relief?: boolean;
   floorH?: { ground: number; typical: number };
+  hotelRooms?: number;
   /** Parts of the hash that were present but could not be read. */
   bad: string[];
 }
@@ -172,8 +174,16 @@ export function readHash(hash = window.location.hash): HashState {
     if (g >= 2.4 && g <= 10 && ty >= 2.4 && ty <= 10) out.floorH = { ground: g, typical: ty };
     else out.bad.push('floor heights');
   }
+  const hr = h.get('hr');
+  if (hr !== null) {
+    const n = /^\d{1,6}$/.test(hr) ? Number(hr) : NaN;
+    if (n >= 1 && n <= MAX_HOTEL_ROOMS) out.hotelRooms = n;
+    else out.bad.push('hotel rooms');
+  }
   return out;
 }
+
+export const MAX_HOTEL_ROOMS = 100_000;
 
 export interface ShareState {
   ring: LL[] | null;
@@ -182,6 +192,8 @@ export interface ShareState {
   station: boolean;
   relief: boolean;
   floorH: { ground: number; typical: number } | null;
+  /** Hotel room count; written only for hotels. */
+  hotelRooms?: number | null;
 }
 
 export function hashOf(st: ShareState): string {
@@ -196,6 +208,7 @@ export function hashOf(st: ShareState): string {
   if (st.station) parts.push('s=1');
   if (!st.relief) parts.push('rl=0');
   if (st.floorH) parts.push(`fh=${st.floorH.ground}x${st.floorH.typical}`);
+  if (st.type === 'hotel' && st.hotelRooms) parts.push(`hr=${st.hotelRooms}`);
   return `#${parts.join('&')}`;
 }
 

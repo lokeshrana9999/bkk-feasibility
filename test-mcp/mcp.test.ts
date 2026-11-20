@@ -189,6 +189,59 @@ describe('tools', () => {
   });
 });
 
+describe('share link: the URL alone reproduces the evaluation (no server state)', () => {
+  /** evaluate_plot arguments rebuilt from nothing but the link's hash, as the web app reads it. */
+  function argsFromLink(link: string) {
+    const h = readHash(link.slice(link.indexOf('#')));
+    expect(h.bad).toEqual([]);
+    return {
+      ring: h.ring,
+      building_type: h.type,
+      edges: Object.entries(h.edges ?? {}).map(([i, o]) => ({ index: Number(i), ...o })),
+      near_station: h.station,
+      wider_road_relief: h.relief,
+      floor_heights: h.floorH,
+      hotel_rooms: h.hotelRooms,
+      detail: 'full',
+    };
+  }
+  // 10-decimal corners: the link keeps 7, so the MCP must evaluate the rounded outline too
+  const fine = SOI38.map(([x, y]) => [x + 3.3e-9, y - 4.4e-9]);
+  const cases: [string, Record<string, unknown>][] = [
+    ['condo, detected roads', { ring: SOI38, building_type: 'condo' }],
+    ['10-decimal corners', { ring: fine, building_type: 'apartment' }],
+    ['office, overrides and every option', { ring: SOI38, building_type: 'office', edges: [{ index: 0, role: 'road', width: 30, gap: 1 }, { index: 2, role: 'canal', width: 8 }], near_station: true, wider_road_relief: false, floor_heights: { ground: 5, typical: 3.5 } }],
+    ['hotel with a room count', { ring: SOI38, building_type: 'hotel', hotel_rooms: 200 }],
+  ];
+  for (const [name, args] of cases) {
+    it(name, async () => {
+      const a = (await tool('evaluate_plot', { ...args, detail: 'full' })).v;
+      expect(a.ok).toBe(true);
+      const b = (await tool('evaluate_plot', argsFromLink(a.shareLink))).v;
+      expect(b.ok).toBe(true);
+      expect(b.inputs).toEqual(a.inputs);
+      expect(b.plot).toEqual(a.plot);
+      expect(b.regimes).toEqual(a.regimes);
+      expect(b.designs).toEqual(a.designs);
+      expect(b.rulesApplied).toEqual(a.rulesApplied);
+      expect(b.shareLink).toBe(a.shareLink);
+    });
+  }
+
+  it('hotel rooms travel in the link (hr=) and change the gate', async () => {
+    const few = (await tool('evaluate_plot', { ring: SOI38, building_type: 'hotel', hotel_rooms: 60 })).v;
+    expect(few.shareLink).toContain('&hr=60');
+    expect(readHash(few.shareLink.slice(few.shareLink.indexOf('#'))).hotelRooms).toBe(60);
+    const est = (await tool('evaluate_plot', { ring: SOI38, building_type: 'hotel' })).v;
+    expect(est.shareLink).not.toContain('hr=');
+  });
+
+  it('detect_roads also links to the app', async () => {
+    const { v } = await tool('detect_roads', { ring: SOI38 });
+    expect(v.appLink).toBe(`${ORIGIN}/#p=${SOI38.map((q) => `${q[0].toFixed(7)},${q[1].toFixed(7)}`).join(';')}&t=condo`);
+  });
+});
+
 describe('typed errors', () => {
   const circle = (n: number, r: number): [number, number][] =>
     Array.from({ length: n }, (_, i) => [100.5796 + (r / 108000) * Math.cos((2 * Math.PI * i) / n), 13.721 + (r / 110600) * Math.sin((2 * Math.PI * i) / n)]);

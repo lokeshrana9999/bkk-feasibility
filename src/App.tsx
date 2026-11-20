@@ -45,6 +45,7 @@ export default function App() {
   const [nearStation, setNearStation] = useState(false);
   const [relief, setRelief] = useState(true);
   const [floorH, setFloorH] = useState<{ ground: number; typical: number } | null>(null);
+  const [hotelRooms, setHotelRooms] = useState<number | null>(null);
   const [ov, setOv] = useState<{ key: string; map: Record<number, EdgeOverride> }>({ key: '', map: {} });
   const ovNext = useRef<Record<number, EdgeOverride> | null>(null);
   const [hoverEdge, setHoverEdge] = useState<number | null>(null);
@@ -124,6 +125,7 @@ export default function App() {
     setNearStation(h.station ?? false);
     setRelief(h.relief ?? true);
     setFloorH(h.floorH ?? null);
+    setHotelRooms(h.hotelRooms ?? null);
     ovNext.current = h.edges ?? {};
     setLinkNotice(h.bad.length ? `Part of the link could not be read (${h.bad.join(', ')}); defaults are used for it.` : null);
     mapRef.current?.setPlot(h.ring ?? DEMOS[0]!.ring, fly);
@@ -240,8 +242,9 @@ export default function App() {
       nearStation,
       widerRoadRelief: relief,
       ...(floorH ? { floorH } : {}),
+      ...(type === 'hotel' && hotelRooms ? { hotelRooms } : {}),
     };
-  }, [eRing, zoneHit, overrides, edges, type, nearStation, relief, floorH]);
+  }, [eRing, zoneHit, overrides, edges, type, nearStation, relief, floorH, hotelRooms]);
   inputRef.current = input;
 
   useEffect(() => {
@@ -261,14 +264,14 @@ export default function App() {
     // nothing is written while the zone or roads load: the link's edge edits are not applied yet
     const settling = !!ring && ringOk && (!zs || zs.kind === 'loading' || (!!zoneHit && !rowsReady));
     if (drawing || !mapReady || settling || (eRing && !overrides)) return;
-    const t = setTimeout(() => writeHash({ ring, type, edges: overrides ?? {}, station: nearStation, relief, floorH }), 600);
+    const t = setTimeout(() => writeHash({ ring, type, edges: overrides ?? {}, station: nearStation, relief, floorH, hotelRooms }), 600);
     return () => clearTimeout(t);
-  }, [ring, eRing, type, overrides, nearStation, relief, floorH, drawing, mapReady, zs, zoneHit, rowsReady, ringOk]);
+  }, [ring, eRing, type, overrides, nearStation, relief, floorH, hotelRooms, drawing, mapReady, zs, zoneHit, rowsReady, ringOk]);
 
   // before the user replaces the plot (demo, new drawing), make sure the current one is in the
   // history, so Back returns to it even if its debounced write had not happened yet
-  const shareRef = useRef({ ring, type, edges: overrides ?? {}, station: nearStation, relief, floorH });
-  shareRef.current = { ring, type, edges: overrides ?? {}, station: nearStation, relief, floorH };
+  const shareRef = useRef({ ring, type, edges: overrides ?? {}, station: nearStation, relief, floorH, hotelRooms });
+  shareRef.current = { ring, type, edges: overrides ?? {}, station: nearStation, relief, floorH, hotelRooms };
   const flushHash = useCallback(() => {
     if (shareRef.current.ring) writeHash(shareRef.current);
   }, []);
@@ -406,6 +409,8 @@ export default function App() {
         setRelief={setRelief}
         floorH={floorH}
         setFloorH={setFloorH}
+        hotelRooms={hotelRooms}
+        setHotelRooms={setHotelRooms}
         result={input ? result : null}
         engineError={input ? engineError : null}
         ms={ms}
