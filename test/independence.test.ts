@@ -91,7 +91,9 @@ describe('oracle independence', () => {
 
   it('oracle code uses no identifier exported by src/engine/', () => {
     const names = new Set<string>();
-    for (const f of srcFiles) {
+    // engine exports only: other layers under src/ (site, UI) may share everyday names such as
+    // Building with the oracle without sharing any rule code
+    for (const f of srcFiles.filter((p) => inside(path.join(SRC, 'engine'), p))) {
       const t = fs.readFileSync(f, 'utf8');
       for (const m of t.matchAll(/\bexport\s+(?:declare\s+)?(?:async\s+)?(?:function\*?|const|let|var|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g)) names.add(m[1]!);
       for (const m of t.matchAll(/\bexport\s*\{([^}]*)\}/g)) {
