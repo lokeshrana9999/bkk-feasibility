@@ -5,7 +5,7 @@
   "outputDirectory": "dist",
   "functions": {
     "api/mcp.js": {
-      "includeFiles": "public/data/{areas.json,zones_y9.json,zones_all.json,row/*.json,roads/*.json}",
+      "includeFiles": "public/data/{areas.json,gazetteer.json,zones_y9.json,zones_all.json,row/*.json,roads/*.json}",
       "maxDuration": 30
     }
   },

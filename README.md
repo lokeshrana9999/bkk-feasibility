@@ -14,6 +14,8 @@ The engine is also a public, read-only [Model Context Protocol](https://modelcon
 | Tool | Input | Returns |
 |---|---|---|
 | `about` | none | scope (zone ย.9, 2013 plan), sources and licences, legal readings still to confirm, links |
+| `list_zones` | none | the 31 ย.9 regions in scope: code (Thai / Latin), FAR, OSR, size, centre, bounds, BTS/MRT stations, main roads, soi count |
+| `search_place` | `query` (soi, road or station name in English or Thai, or `"lat, lng"`), `limit` | coordinates, in scope or not, zone, nearest station and whether it is within 500 m; offline OpenStreetMap gazetteer, the same one as the app's search box |
 | `find_zone` | `lat`, `lng` | zone code (Thai / Latin), FAR, OSR, in scope or not |
 | `get_rules` | `zone` (eg `Y9-23`) or `lat`/`lng`, `building_type` | cited rule rows: source, article, Thai quote, English reading |
 | `detect_roads` | `ring` | each plot edge: road / canal / neighbour, measured right-of-way width and gap |

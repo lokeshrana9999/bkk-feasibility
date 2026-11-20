@@ -3,16 +3,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import type { LL } from '../site/geo';
-
-interface Entry {
-  t: 'zone' | 'road' | 'soi' | 'station';
-  name: string;
-  en?: string;
-  p: LL;
-  area: number | null;
-  bbox?: [number, number, number, number];
-  system?: string;
-}
+import { parseLatLng, searchPlaces, type Place as Entry } from '../site/places';
 
 let gaz: Promise<Entry[]> | null = null;
 function loadGaz(): Promise<Entry[]> {
@@ -23,7 +14,6 @@ function loadGaz(): Promise<Entry[]> {
   return gaz;
 }
 
-const norm = (s: string) => s.toLowerCase().replace(/[\s._-]+/g, '');
 const TYPE_LABEL: Record<Entry['t'], string> = { zone: 'zone', road: 'road', soi: 'soi', station: 'station' };
 
 export function Search({ onPick }: { onPick: (p: LL, zoom: number, area: number | null) => void }) {
@@ -36,30 +26,11 @@ export function Search({ onPick }: { onPick: (p: LL, zoom: number, area: number 
   const results = useMemo(() => {
     const s = q.trim();
     if (!s) return [];
-    const ll = s.match(/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/);
-    if (ll) {
-      let a = Number(ll[1]);
-      let b = Number(ll[2]);
-      // accept "lat, lng" (Google Maps order) and "lng, lat"
-      if (Math.abs(a) < Math.abs(b)) [a, b] = [b, a];
-      return [{ t: 'road' as const, name: `${b.toFixed(6)}, ${a.toFixed(6)}`, en: 'coordinates', p: [a, b] as LL, area: null }];
-    }
+    // accept "lat, lng" (Google Maps order) and "lng, lat"
+    const ll = parseLatLng(s);
+    if (ll) return [{ t: 'road' as const, name: `${ll[1].toFixed(6)}, ${ll[0].toFixed(6)}`, en: 'coordinates', p: ll as LL, area: null }];
     if (!entries) return [];
-    const n = norm(s);
-    const scored: [number, Entry][] = [];
-    for (const e of entries) {
-      const a = norm(e.name);
-      const b = e.en ? norm(e.en) : '';
-      let sc = -1;
-      if (a === n || b === n) sc = 0;
-      else if (a.startsWith(n) || b.startsWith(n)) sc = 1;
-      else if (a.includes(n) || b.includes(n)) sc = 2;
-      if (sc < 0) continue;
-      // places inside a ย.9 area first
-      scored.push([sc * 10 + (e.area ? 0 : 5) + (e.t === 'zone' ? -1 : 0), e]);
-    }
-    scored.sort((x, y) => x[0] - y[0]);
-    return scored.slice(0, 8).map((x) => x[1]);
+    return searchPlaces(entries, s, 8);
   }, [q, entries]);
 
   const pick = (e: Entry) => {

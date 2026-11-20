@@ -4,13 +4,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { about, brief, detectRoads, evaluatePlot, findZone, getRules, ruleTable, type Ctx, TYPES, MAX_VERTICES } from './core';
+import { about, brief, detectRoads, evaluatePlot, findZone, getRules, listZones, ruleTable, searchPlace, type Ctx, TYPES, MAX_VERTICES } from './core';
 
 export const SERVER_NAME = 'bkk-feasibility';
 export const SERVER_VERSION = '1.0.0';
 
 const INSTRUCTIONS = `Bangkok zone ย.9 (Y9) building feasibility, read-only and deterministic (no LLM inside).
-Typical flow: find_zone(lat, lng) to check the site is in ย.9 -> detect_roads(ring) to see which plot edges face a road and how wide it is -> evaluate_plot(ring, building_type) for the rules, the low- and high-rise envelopes, three designs with rule checklists and a share link that opens the plot in the 3D web app.
+Typical flow: list_zones to show the regions in scope, search_place to turn a street or station name into coordinates, find_zone(lat, lng) to check the site is in ย.9 -> detect_roads(ring) to see which plot edges face a road and how wide it is -> evaluate_plot(ring, building_type) for the rules, the low- and high-rise envelopes, three designs with rule checklists and a share link that opens the plot in the 3D web app.
 Rings are [lon, lat] pairs (longitude first), at most ${MAX_VERTICES} corners and 200,000 m2. Every result is a feasibility aid, not a legal opinion; say so when you report it.
 Never guess a plot location, corners, road widths or the building type. If you lack one, call the tool without it: it answers code "needs-detail" with askUser questions. Put those questions (and any askUser / checkWithUser items in other results) to the user, then call again.
 Only share app links the tools return (shareLink, appLink). When a link is null, the result says why and what to ask; never build an app URL yourself.`;
@@ -44,6 +44,32 @@ export function createServer(ctx: Ctx): McpServer {
       annotations: READ_ONLY,
     },
     async () => result(about(ctx)),
+  );
+
+  server.registerTool(
+    'list_zones',
+    {
+      title: 'List the ย.9 regions',
+      description: 'The 31 areas of zone ย.9 this tool covers: code (Thai / Latin), FAR, OSR, size, centre point and bounds, with the BTS/MRT stations, main roads and number of sois in each. Use it to show the user which regions are in scope.',
+      inputSchema: {},
+      annotations: READ_ONLY,
+    },
+    async () => result(await listZones(ctx)),
+  );
+
+  server.registerTool(
+    'search_place',
+    {
+      title: 'Find a place by name',
+      description:
+        'Turns a soi, road or BTS/MRT/ARL/SRT station name (English or Thai, eg "Sukhumvit 38", "Thong Lo", "ทองหล่อ") or a pasted "lat, lng" into coordinates, with whether it is in ย.9, its zone, and the nearest station. Offline gazetteer from OpenStreetMap, no geocoding service. A place is not a plot: ask the user for the plot corners next.',
+      inputSchema: {
+        query: z.string().max(100).optional().describe('Place name or "lat, lng"'),
+        limit: z.number().int().min(1).max(20).optional().describe('Most results to return (default 8)'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ query, limit }) => result(await searchPlace(ctx, query, limit)),
   );
 
   server.registerTool(

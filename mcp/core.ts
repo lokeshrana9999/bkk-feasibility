@@ -7,8 +7,9 @@ import { evaluate } from '../src/engine/evaluate.js';
 import { LIMITS, RULES, RULE_ORDER, TYPE_PARAMS } from '../src/engine/rules.js';
 import type { BuildingType, EdgeRole, EngineInput, EngineResult, Envelope } from '../src/engine/types.js';
 import type { Area, ZonePoly } from '../src/site/data';
-import { areaM2, openRing, pointInPoly, selfIntersects, signedArea, type LL } from '../src/site/geo';
+import { areaM2, makeFrame, openRing, pointInPoly, selfIntersects, signedArea, toXY, type LL } from '../src/site/geo';
 import { nameKey } from '../src/site/parse';
+import { parseLatLng, searchPlaces, type Place } from '../src/site/places';
 import { preparePlot, type Prepared } from '../src/site/prep';
 import type { DetectedEdge } from '../src/site/roads';
 import { zoneState } from '../src/site/zone';
@@ -351,12 +352,14 @@ export function about(ctx: Ctx) {
     stricterReadings: 'Where the ordinance and a ministerial regulation differ, or the text leaves room, the engine applies the stricter reading (eg the 2x height rule on every road, not only the nearest).',
     tools: {
       about: 'this summary',
+      list_zones: 'the 31 ย.9 regions in scope: code, FAR, OSR, size, centre, bounds, stations and main roads',
+      search_place: 'soi, road or station name (English / Thai) or "lat, lng" -> coordinates, in scope or not, zone, nearest station',
       find_zone: 'lat, lng -> zone code, FAR, OSR, in scope or not',
       get_rules: 'zone code or lat/lng + building type -> cited rule rows',
       detect_roads: 'plot ring (lon/lat) -> each edge: road / canal / neighbour, measured right-of-way width and gap',
       evaluate_plot: 'plot ring + building type (+ edge overrides, floor heights) -> rules applied, both regimes, designs with checklists, share link to the 3D app',
     },
-    workflow: 'find_zone (is it ย.9?) -> detect_roads (check the road widths; correct them with edge overrides if the map is wrong) -> evaluate_plot -> open shareLink to see it in 3D.',
+    workflow: 'list_zones / search_place (where?) -> find_zone (is it ย.9?) -> detect_roads (check the road widths; correct them with edge overrides if the map is wrong) -> evaluate_plot -> open shareLink to see it in 3D.',
     links: { app: ctx.appUrl, repo: REPO_URL, mcp: `${ctx.appUrl}/mcp` },
     disclaimer: DISCLAIMER,
   };
@@ -385,6 +388,147 @@ export function findZone(ctx: Ctx, lat: number, lng: number) {
     };
   });
 }
+
+// ---------------------------------------------------------------------------- regions and places
+
+const STATION_REACH = 500; // m, zoning art. 16: within 500 m of a mass-transit station
+
+const ll2 = (p: LL) => ({ lat: r6(p[1]), lng: r6(p[0]) });
+function r6(v: number) {
+  return Math.round(v * 1e6) / 1e6;
+}
+const distM = (a: LL, b: LL) => {
+  const f = makeFrame(a[0], a[1]);
+  const q = toXY(f, b);
+  return Math.hypot(q[0], q[1]);
+};
+const stationLabel = (s: Place) => `${s.en ?? s.name}${s.system ? ` (${s.system})` : ''}`;
+
+/** Zone labels as the app shows them: "Y9-14" is two polygons, so its parts are numbered. */
+function areaLabels(areas: Area[]): Map<number, { code: string; codeLatin: string }> {
+  const by = new Map<string, Area[]>();
+  for (const a of areas) by.set(a.labelLatin, [...(by.get(a.labelLatin) ?? []), a]);
+  const out = new Map<number, { code: string; codeLatin: string }>();
+  for (const list of by.values()) {
+    list.sort((x, y) => x.id - y.id);
+    list.forEach((a, i) => {
+      const part = list.length > 1 ? ` (part ${i + 1})` : '';
+      out.set(a.id, { code: a.label, codeLatin: `${a.labelLatin}${part}` });
+    });
+  }
+  return out;
+}
+
+export function listZones(ctx: Ctx) {
+  return guard(async () => {
+    const [areas, places] = await Promise.all([ctx.data.areas(), ctx.data.places()]);
+    const labels = areaLabels(areas);
+    const num = (s: string) => Number(s.replace(/\D+/g, ' ').trim().split(' ')[1] ?? 0);
+    const zones = [...areas]
+      .sort((a, b) => num(a.labelLatin) - num(b.labelLatin) || a.id - b.id)
+      .map((a) => {
+        const inArea = places.filter((p) => p.area === a.id);
+        return {
+          code: labels.get(a.id)!.code,
+          codeLatin: labels.get(a.id)!.codeLatin,
+          areaId: a.id,
+          far: a.far,
+          osrPct: a.osr,
+          areaHa: Math.round(a.areaM2 / 1000) / 10,
+          centre: ll2(a.labelPoint),
+          bbox: { west: a.bbox[0], south: a.bbox[1], east: a.bbox[2], north: a.bbox[3] },
+          stations: inArea.filter((p) => p.t === 'station').map(stationLabel),
+          mainRoads: inArea
+            .filter((p) => p.t === 'road')
+            .sort((x, y) => (y.lenM ?? 0) - (x.lenM ?? 0))
+            .slice(0, 4)
+            .map((p) => p.en ?? p.name),
+          soiCount: inArea.filter((p) => p.t === 'soi').length,
+        };
+      });
+    return {
+      ok: true as const,
+      count: zones.length,
+      scope: 'Zone ย.9 (Y9, high-density residential) of the Bangkok Comprehensive Plan B.E. 2556. Only these areas are in scope.',
+      zones,
+      note: 'stations, mainRoads and soiCount list named places whose point lies in the area (OpenStreetMap). A zone is an area, not a plot: to evaluate, the user still needs a plot inside it. Use search_place to find a street or station by name, then ask the user for the plot corners.',
+      disclaimer: DISCLAIMER,
+    };
+  });
+}
+
+export function searchPlace(ctx: Ctx, query: string | undefined, limit = 8) {
+  return guard(async () => {
+    const q = (query ?? '').trim();
+    if (!q) return needsDetail([{ field: 'query', ask: 'Where is the site? A soi, road or BTS/MRT station name, or a map pin (lat, lng) will do.' }], 'search_place looks up a place by name.');
+    if (q.length > 100) return fail('invalid-input', 'query is over 100 characters; give a soi, road or station name');
+    const n = Math.max(1, Math.min(20, Math.floor(limit)));
+    const [areas, places] = await Promise.all([ctx.data.areas(), ctx.data.places()]);
+    const labels = areaLabels(areas);
+    const stations = places.filter((p) => p.t === 'station');
+    const nearest = (p: LL) => {
+      let best: Place | null = null;
+      let d = Infinity;
+      for (const s of stations) {
+        const x = distM(p, s.p);
+        if (x < d) [best, d] = [s, x];
+      }
+      return best ? { name: stationLabel(best), distanceM: Math.round(d), within500m: d <= STATION_REACH } : null;
+    };
+
+    // a pasted point: say where it is
+    const pt = parseLatLng(q);
+    if (pt) {
+      const fz = await findZone(ctx, pt[1], pt[0]);
+      if (!fz.ok) return fz;
+      return {
+        ok: true as const,
+        query: q,
+        results: [{ type: 'point', point: ll2(pt), inScope: fz.inScope, zone: fz.zone, nearestStation: nearest(pt) }],
+        then: fz.inScope ? THEN_PLOT : 'This point is outside ย.9; tell the user it is out of scope.',
+        disclaimer: DISCLAIMER,
+      };
+    }
+
+    const hits = searchPlaces(places, q, n);
+    if (!hits.length) {
+      return {
+        ok: true as const,
+        query: q,
+        results: [],
+        askUser: [`I could not find "${q}" in the Bangkok place list. Can you give a nearby soi, road or BTS/MRT station name, or a map pin (lat, lng)?`],
+        then: 'Ask the user; do not guess coordinates.',
+        disclaimer: DISCLAIMER,
+      };
+    }
+    return {
+      ok: true as const,
+      query: q,
+      results: hits.map((h) => {
+        const lab = h.area !== null ? labels.get(h.area) : undefined;
+        const a = h.area !== null ? areas.find((x) => x.id === h.area) : undefined;
+        return {
+          type: h.t,
+          name: h.en ?? h.name,
+          nameTh: h.name,
+          ...(h.system ? { system: h.system } : {}),
+          point: ll2(h.p),
+          inScope: h.area !== null,
+          zone: lab && a ? { code: lab.code, codeLatin: lab.codeLatin, far: a.far, osrPct: a.osr } : null,
+          ...(h.bbox ? { bbox: { west: h.bbox[0], south: h.bbox[1], east: h.bbox[2], north: h.bbox[3] } } : {}),
+          ...(h.lenM ? { lengthM: h.lenM } : {}),
+          ...(h.t !== 'station' && h.t !== 'zone' ? { nearestStation: nearest(h.p) } : {}),
+        };
+      }),
+      note: 'inScope and zone are for the place\'s point (a road\'s midpoint); a long road can cross several zones. nearestStation is measured from that point: near_station needs the plot itself within 500 m.',
+      then: hits.length > 1 ? `If more than one result could be the place the user means, ask which. ${THEN_PLOT}` : THEN_PLOT,
+      disclaimer: DISCLAIMER,
+    };
+  });
+}
+
+const THEN_PLOT =
+  'A place is a point or a street, not a plot. Ask the user for the plot: its corners (map pins), or where it sits on this street with its frontage and depth. Then detect_roads and evaluate_plot with the corners as [lon, lat].';
 
 function ruleRow(id: string) {
   const r = RULES[id]!;

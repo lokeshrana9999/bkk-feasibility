@@ -65,10 +65,10 @@ describe('protocol', () => {
     expect(body.result.instructions).toMatch(/not a legal opinion/);
   });
 
-  it('tools/list: the five read-only tools', async () => {
+  it('tools/list: the seven read-only tools', async () => {
     const { body } = await rpc('tools/list');
     const tools = body.result.tools as { name: string; annotations: Record<string, boolean>; inputSchema: { properties?: Record<string, unknown> } }[];
-    expect(tools.map((t) => t.name).sort()).toEqual(['about', 'detect_roads', 'evaluate_plot', 'find_zone', 'get_rules']);
+    expect(tools.map((t) => t.name).sort()).toEqual(['about', 'detect_roads', 'evaluate_plot', 'find_zone', 'get_rules', 'list_zones', 'search_place']);
     for (const t of tools) expect(t.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     expect(Object.keys(tools.find((t) => t.name === 'evaluate_plot')!.inputSchema.properties!)).toEqual(expect.arrayContaining(['ring', 'building_type', 'edges', 'floor_heights']));
   });
@@ -96,6 +96,47 @@ describe('tools', () => {
     expect(v.links.mcp).toBe(`${ORIGIN}/mcp`);
     expect(v.decisionsToTake.length).toBe(7);
     expect(v.disclaimer).toBe(DISCLAIMER);
+  });
+
+  it('list_zones: the 31 ย.9 areas with FAR, centre, stations; Y9-14 parts numbered', async () => {
+    const { v } = await tool('list_zones');
+    expect(v.ok).toBe(true);
+    expect(v.count).toBe(31);
+    expect(new Set(v.zones.map((z: { codeLatin: string }) => z.codeLatin)).size).toBe(31);
+    expect(v.zones.filter((z: { codeLatin: string }) => z.codeLatin.startsWith('Y9-14 (part')).length).toBe(2);
+    const y23 = v.zones.find((z: { codeLatin: string }) => z.codeLatin === 'Y9-23');
+    expect(y23).toMatchObject({ code: 'ย.๙-๒๓', far: 7, osrPct: 4.5 });
+    expect(y23.areaHa).toBeGreaterThan(1);
+    // its centre is inside it (find_zone agrees)
+    const fz = await tool('find_zone', y23.centre);
+    expect(fz.v.zone.code).toBe('ย.๙-๒๓');
+    expect(v.zones.find((z: { codeLatin: string }) => z.codeLatin === 'Y9-4').far).toBe(6);
+    expect(v.zones.some((z: { stations: string[] }) => z.stations.length > 0)).toBe(true);
+  });
+
+  it('search_place: English, Thai and "lat, lng"; in scope, zone and nearest station', async () => {
+    const s = await tool('search_place', { query: 'Sukhumvit 38' });
+    expect(s.v.ok).toBe(true);
+    const top = s.v.results[0];
+    expect(top.name).toMatch(/Sukhumvit 38/);
+    expect(top).toMatchObject({ inScope: true, zone: { codeLatin: 'Y9-23' } });
+    expect(top.nearestStation.name).toMatch(/BTS|MRT|ARL|SRT/);
+    expect(s.v.then).toMatch(/not a plot/);
+    const th = await tool('search_place', { query: 'ทองหล่อ', limit: 3 });
+    expect(th.v.results.length).toBeGreaterThan(0);
+    expect(th.v.results.length).toBeLessThanOrEqual(3);
+    const pt = await tool('search_place', { query: '13.72092, 100.57957' });
+    expect(pt.v.results[0]).toMatchObject({ type: 'point', inScope: true, zone: { code: 'ย.๙-๒๓' } });
+    const station = await tool('search_place', { query: 'Phrom Phong' });
+    expect(station.v.results.some((r: { type: string }) => r.type === 'station')).toBe(true);
+  });
+
+  it('search_place: no match or no query asks the user instead of guessing', async () => {
+    const none = await tool('search_place', { query: 'zzqx nowhere' });
+    expect(none.v).toMatchObject({ ok: true, results: [] });
+    expect(none.v.askUser[0]).toMatch(/could not find/);
+    const empty = await tool('search_place', {});
+    expect(empty.v).toMatchObject({ ok: false, code: 'needs-detail', missing: [{ field: 'query' }] });
   });
 
   it('find_zone: Sukhumvit 38 is ย.๙-๒๓; elsewhere is out of scope or off the map', async () => {
@@ -368,7 +409,7 @@ describe('http', () => {
   it('curl without the Accept header still works; bad JSON is a parse error', async () => {
     const res = await handle(new Request(`${ORIGIN}/mcp`, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) }));
     expect(res.status).toBe(200);
-    expect(((await res.json()) as any).result.tools.length).toBe(5);
+    expect(((await res.json()) as any).result.tools.length).toBe(7);
     const bad = await handle(new Request(`${ORIGIN}/mcp`, { method: 'POST', body: '{nope' }));
     expect(bad.status).toBe(400);
     expect(((await bad.json()) as any).error.code).toBe(-32700);
@@ -404,7 +445,7 @@ describe('entries', () => {
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [`${ROOT}node_modules/tsx/dist/cli.mjs`, `${ROOT}mcp/stdio.ts`], cwd: ROOT, stderr: 'pipe' }));
     try {
       const { tools } = await client.listTools();
-      expect(tools.length).toBe(5);
+      expect(tools.length).toBe(7);
       const r = await client.callTool({ name: 'find_zone', arguments: { lat: 13.72092, lng: 100.57957 } });
       expect((r.structuredContent as any).zone.code).toBe('ย.๙-๒๓');
     } finally {

@@ -32,7 +32,7 @@ check('initialize', init.body.result?.serverInfo?.name === 'bkk-feasibility', `$
 
 const list = await rpc('tools/list');
 const names = (list.body.result?.tools ?? []).map((t) => t.name).sort().join(',');
-check('tools/list', names === 'about,detect_roads,evaluate_plot,find_zone,get_rules', names);
+check('tools/list', names === 'about,detect_roads,evaluate_plot,find_zone,get_rules,list_zones,search_place', names);
 
 const call = async (name, args) => {
   const r = await rpc('tools/call', { name, arguments: args });
@@ -40,6 +40,10 @@ const call = async (name, args) => {
 };
 let c = await call('about', {});
 check('about', c.v?.ok === true, `${c.ms} ms, app ${c.v?.links?.app}`);
+c = await call('list_zones', {});
+check('list_zones', c.v?.count === 31, `${c.ms} ms, ${c.v?.count} zones`);
+c = await call('search_place', { query: 'Sukhumvit 38' });
+check('search_place', c.v?.results?.[0]?.inScope === true, `${c.ms} ms, ${c.v?.results?.[0]?.name} ${c.v?.results?.[0]?.zone?.codeLatin}`);
 c = await call('find_zone', { lat: 13.72092, lng: 100.57957 });
 check('find_zone', c.v?.zone?.code === 'ย.๙-๒๓', `${c.ms} ms`);
 c = await call('get_rules', { zone: 'Y9-23', building_type: 'condo' });

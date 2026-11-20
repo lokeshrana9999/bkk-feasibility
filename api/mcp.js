@@ -175,6 +175,7 @@ var SiteData = class {
     this.src = src;
   }
   areasP = null;
+  placesP = null;
   y9P = null;
   allP = null;
   rows = /* @__PURE__ */ new Map();
@@ -196,6 +197,10 @@ var SiteData = class {
       set(p);
     }
     return p;
+  }
+  /** Named places (zones, roads, sois, stations) for search_place and list_zones. */
+  places() {
+    return this.keep(() => this.placesP, (p) => this.placesP = p, () => this.need("gazetteer.json", (j) => j.e ?? []));
   }
   areas() {
     return this.keep(() => this.areasP, (p) => this.areasP = p, () => this.need("areas.json", (j) => j.areas ?? []));
@@ -2477,6 +2482,34 @@ function evaluate(input) {
   }
 }
 
+// src/site/places.ts
+var norm = (s) => s.toLowerCase().replace(/[\s._-]+/g, "");
+function parseLatLng(s) {
+  const m = s.match(/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (!m) return null;
+  let a = Number(m[1]);
+  let b = Number(m[2]);
+  if (Math.abs(a) < Math.abs(b)) [a, b] = [b, a];
+  return [a, b];
+}
+function searchPlaces(entries, q, limit = 8) {
+  const n = norm(q.trim());
+  if (!n) return [];
+  const scored = [];
+  for (const e of entries) {
+    const a = norm(e.name);
+    const b = e.en ? norm(e.en) : "";
+    let sc = -1;
+    if (a === n || b === n) sc = 0;
+    else if (a.startsWith(n) || b.startsWith(n)) sc = 1;
+    else if (a.includes(n) || b.includes(n)) sc = 2;
+    if (sc < 0) continue;
+    scored.push([sc * 10 + (e.area ? 0 : 5) + (e.t === "zone" ? -1 : 0), e]);
+  }
+  scored.sort((x, y) => x[0] - y[0]);
+  return scored.slice(0, limit).map((x) => x[1]);
+}
+
 // src/site/prep.ts
 import { EndType as EndType2, FillRule as FillRule2, JoinType as JoinType2, areaPaths as areaPaths2, difference as difference2, inflatePaths as inflatePaths2, union as union2 } from "clipper2-ts";
 
@@ -3224,12 +3257,14 @@ function about(ctx) {
     stricterReadings: "Where the ordinance and a ministerial regulation differ, or the text leaves room, the engine applies the stricter reading (eg the 2x height rule on every road, not only the nearest).",
     tools: {
       about: "this summary",
+      list_zones: "the 31 \u0E22.9 regions in scope: code, FAR, OSR, size, centre, bounds, stations and main roads",
+      search_place: 'soi, road or station name (English / Thai) or "lat, lng" -> coordinates, in scope or not, zone, nearest station',
       find_zone: "lat, lng -> zone code, FAR, OSR, in scope or not",
       get_rules: "zone code or lat/lng + building type -> cited rule rows",
       detect_roads: "plot ring (lon/lat) -> each edge: road / canal / neighbour, measured right-of-way width and gap",
       evaluate_plot: "plot ring + building type (+ edge overrides, floor heights) -> rules applied, both regimes, designs with checklists, share link to the 3D app"
     },
-    workflow: "find_zone (is it \u0E22.9?) -> detect_roads (check the road widths; correct them with edge overrides if the map is wrong) -> evaluate_plot -> open shareLink to see it in 3D.",
+    workflow: "list_zones / search_place (where?) -> find_zone (is it \u0E22.9?) -> detect_roads (check the road widths; correct them with edge overrides if the map is wrong) -> evaluate_plot -> open shareLink to see it in 3D.",
     links: { app: ctx.appUrl, repo: REPO_URL, mcp: `${ctx.appUrl}/mcp` },
     disclaimer: DISCLAIMER
   };
@@ -3253,6 +3288,128 @@ function findZone(ctx, lat, lng) {
     };
   });
 }
+var STATION_REACH = 500;
+var ll2 = (p) => ({ lat: r6(p[1]), lng: r6(p[0]) });
+function r6(v) {
+  return Math.round(v * 1e6) / 1e6;
+}
+var distM = (a, b) => {
+  const f = makeFrame(a[0], a[1]);
+  const q = toXY(f, b);
+  return Math.hypot(q[0], q[1]);
+};
+var stationLabel = (s) => `${s.en ?? s.name}${s.system ? ` (${s.system})` : ""}`;
+function areaLabels(areas) {
+  const by = /* @__PURE__ */ new Map();
+  for (const a of areas) by.set(a.labelLatin, [...by.get(a.labelLatin) ?? [], a]);
+  const out = /* @__PURE__ */ new Map();
+  for (const list of by.values()) {
+    list.sort((x, y) => x.id - y.id);
+    list.forEach((a, i) => {
+      const part = list.length > 1 ? ` (part ${i + 1})` : "";
+      out.set(a.id, { code: a.label, codeLatin: `${a.labelLatin}${part}` });
+    });
+  }
+  return out;
+}
+function listZones(ctx) {
+  return guard(async () => {
+    const [areas, places] = await Promise.all([ctx.data.areas(), ctx.data.places()]);
+    const labels = areaLabels(areas);
+    const num = (s) => Number(s.replace(/\D+/g, " ").trim().split(" ")[1] ?? 0);
+    const zones = [...areas].sort((a, b) => num(a.labelLatin) - num(b.labelLatin) || a.id - b.id).map((a) => {
+      const inArea = places.filter((p) => p.area === a.id);
+      return {
+        code: labels.get(a.id).code,
+        codeLatin: labels.get(a.id).codeLatin,
+        areaId: a.id,
+        far: a.far,
+        osrPct: a.osr,
+        areaHa: Math.round(a.areaM2 / 1e3) / 10,
+        centre: ll2(a.labelPoint),
+        bbox: { west: a.bbox[0], south: a.bbox[1], east: a.bbox[2], north: a.bbox[3] },
+        stations: inArea.filter((p) => p.t === "station").map(stationLabel),
+        mainRoads: inArea.filter((p) => p.t === "road").sort((x, y) => (y.lenM ?? 0) - (x.lenM ?? 0)).slice(0, 4).map((p) => p.en ?? p.name),
+        soiCount: inArea.filter((p) => p.t === "soi").length
+      };
+    });
+    return {
+      ok: true,
+      count: zones.length,
+      scope: "Zone \u0E22.9 (Y9, high-density residential) of the Bangkok Comprehensive Plan B.E. 2556. Only these areas are in scope.",
+      zones,
+      note: "stations, mainRoads and soiCount list named places whose point lies in the area (OpenStreetMap). A zone is an area, not a plot: to evaluate, the user still needs a plot inside it. Use search_place to find a street or station by name, then ask the user for the plot corners.",
+      disclaimer: DISCLAIMER
+    };
+  });
+}
+function searchPlace(ctx, query, limit = 8) {
+  return guard(async () => {
+    const q = (query ?? "").trim();
+    if (!q) return needsDetail([{ field: "query", ask: "Where is the site? A soi, road or BTS/MRT station name, or a map pin (lat, lng) will do." }], "search_place looks up a place by name.");
+    if (q.length > 100) return fail2("invalid-input", "query is over 100 characters; give a soi, road or station name");
+    const n = Math.max(1, Math.min(20, Math.floor(limit)));
+    const [areas, places] = await Promise.all([ctx.data.areas(), ctx.data.places()]);
+    const labels = areaLabels(areas);
+    const stations = places.filter((p) => p.t === "station");
+    const nearest = (p) => {
+      let best = null;
+      let d = Infinity;
+      for (const s of stations) {
+        const x = distM(p, s.p);
+        if (x < d) [best, d] = [s, x];
+      }
+      return best ? { name: stationLabel(best), distanceM: Math.round(d), within500m: d <= STATION_REACH } : null;
+    };
+    const pt = parseLatLng(q);
+    if (pt) {
+      const fz = await findZone(ctx, pt[1], pt[0]);
+      if (!fz.ok) return fz;
+      return {
+        ok: true,
+        query: q,
+        results: [{ type: "point", point: ll2(pt), inScope: fz.inScope, zone: fz.zone, nearestStation: nearest(pt) }],
+        then: fz.inScope ? THEN_PLOT : "This point is outside \u0E22.9; tell the user it is out of scope.",
+        disclaimer: DISCLAIMER
+      };
+    }
+    const hits = searchPlaces(places, q, n);
+    if (!hits.length) {
+      return {
+        ok: true,
+        query: q,
+        results: [],
+        askUser: [`I could not find "${q}" in the Bangkok place list. Can you give a nearby soi, road or BTS/MRT station name, or a map pin (lat, lng)?`],
+        then: "Ask the user; do not guess coordinates.",
+        disclaimer: DISCLAIMER
+      };
+    }
+    return {
+      ok: true,
+      query: q,
+      results: hits.map((h) => {
+        const lab = h.area !== null ? labels.get(h.area) : void 0;
+        const a = h.area !== null ? areas.find((x) => x.id === h.area) : void 0;
+        return {
+          type: h.t,
+          name: h.en ?? h.name,
+          nameTh: h.name,
+          ...h.system ? { system: h.system } : {},
+          point: ll2(h.p),
+          inScope: h.area !== null,
+          zone: lab && a ? { code: lab.code, codeLatin: lab.codeLatin, far: a.far, osrPct: a.osr } : null,
+          ...h.bbox ? { bbox: { west: h.bbox[0], south: h.bbox[1], east: h.bbox[2], north: h.bbox[3] } } : {},
+          ...h.lenM ? { lengthM: h.lenM } : {},
+          ...h.t !== "station" && h.t !== "zone" ? { nearestStation: nearest(h.p) } : {}
+        };
+      }),
+      note: "inScope and zone are for the place's point (a road's midpoint); a long road can cross several zones. nearestStation is measured from that point: near_station needs the plot itself within 500 m.",
+      then: hits.length > 1 ? `If more than one result could be the place the user means, ask which. ${THEN_PLOT}` : THEN_PLOT,
+      disclaimer: DISCLAIMER
+    };
+  });
+}
+var THEN_PLOT = "A place is a point or a street, not a plot. Ask the user for the plot: its corners (map pins), or where it sits on this street with its frontage and depth. Then detect_roads and evaluate_plot with the corners as [lon, lat].";
 function ruleRow(id) {
   const r = RULES[id];
   return { id: r.id, kind: r.kind, source: r.source, article: r.article, quoteTh: r.quoteTh, text: r.text };
@@ -3542,6 +3699,8 @@ var SOI38_RING = "[[100.5793403,13.7210608],[100.5793802,13.7207012],[100.579792
 var esc = (s) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 var TOOLS = [
   ["about", "none", "Scope (zone \u0E22.9, 2013 plan), sources and licences, legal readings still to confirm, links"],
+  ["list_zones", "none", "The 31 \u0E22.9 regions in scope: code, FAR, OSR, size, centre, bounds, stations and main roads"],
+  ["search_place", 'query (soi, road, station or "lat, lng"), limit?', "Coordinates, in scope or not, zone, nearest BTS/MRT station (offline OSM gazetteer)"],
   ["find_zone", "lat, lng", "Zone code (Thai / Latin), FAR, OSR, in scope or not"],
   ["get_rules", "zone or lat/lng, building_type", "Cited rule rows: source, article, Thai quote, English reading"],
   ["detect_roads", "ring", "Each plot edge: road / canal / neighbour, measured right-of-way width and gap"],
@@ -3603,7 +3762,7 @@ curl -s ${mcp} -H "Content-Type: application/json" -H "Accept: application/json,
 ${TOOLS.map(([n, i, r]) => `<tr><td><code>${n}</code></td><td>${esc(i)}</td><td>${esc(r)}</td></tr>`).join("\n")}
 </table>
 <p>Resource <code>rules://y9</code>: the full cited rule table. Prompt <code>feasibility_report</code>: a short report for a plot, using the tools.</p>
-<p class="mut">Typical flow: <code>find_zone</code> \u2192 <code>detect_roads</code> (check the widths; pass corrections as <code>edges: [{index, role, width, gap}]</code>) \u2192 <code>evaluate_plot</code> \u2192 open its <code>shareLink</code> to see the plot in 3D.</p>
+<p class="mut">Typical flow: <code>list_zones</code> or <code>search_place</code> \u2192 <code>find_zone</code> \u2192 <code>detect_roads</code> (check the widths; pass corrections as <code>edges: [{index, role, width, gap}]</code>) \u2192 <code>evaluate_plot</code> \u2192 open its <code>shareLink</code> to see the plot in 3D.</p>
 <p class="mut"><code>shareLink</code> opens the web app on the same plot with the same inputs (edge overrides, station, relief, floor heights, hotel rooms) and so the same figures. Nothing is stored: the whole state sits in the URL after <code>#</code>. A link is given only when the app is checked to rebuild the same inputs from it; otherwise the result says why and what to ask the user. Missing inputs (plot, building type) return <code>needs-detail</code> with the questions to ask, never a guessed default.</p>
 
 <h2>Scope and limits</h2>
@@ -3625,7 +3784,7 @@ import { z } from "zod";
 var SERVER_NAME = "bkk-feasibility";
 var SERVER_VERSION = "1.0.0";
 var INSTRUCTIONS = `Bangkok zone \u0E22.9 (Y9) building feasibility, read-only and deterministic (no LLM inside).
-Typical flow: find_zone(lat, lng) to check the site is in \u0E22.9 -> detect_roads(ring) to see which plot edges face a road and how wide it is -> evaluate_plot(ring, building_type) for the rules, the low- and high-rise envelopes, three designs with rule checklists and a share link that opens the plot in the 3D web app.
+Typical flow: list_zones to show the regions in scope, search_place to turn a street or station name into coordinates, find_zone(lat, lng) to check the site is in \u0E22.9 -> detect_roads(ring) to see which plot edges face a road and how wide it is -> evaluate_plot(ring, building_type) for the rules, the low- and high-rise envelopes, three designs with rule checklists and a share link that opens the plot in the 3D web app.
 Rings are [lon, lat] pairs (longitude first), at most ${MAX_VERTICES} corners and 200,000 m2. Every result is a feasibility aid, not a legal opinion; say so when you report it.
 Never guess a plot location, corners, road widths or the building type. If you lack one, call the tool without it: it answers code "needs-detail" with askUser questions. Put those questions (and any askUser / checkWithUser items in other results) to the user, then call again.
 Only share app links the tools return (shareLink, appLink). When a link is null, the result says why and what to ask; never build an app URL yourself.`;
@@ -3650,6 +3809,29 @@ function createServer(ctx) {
       annotations: READ_ONLY
     },
     async () => result(about(ctx))
+  );
+  server.registerTool(
+    "list_zones",
+    {
+      title: "List the \u0E22.9 regions",
+      description: "The 31 areas of zone \u0E22.9 this tool covers: code (Thai / Latin), FAR, OSR, size, centre point and bounds, with the BTS/MRT stations, main roads and number of sois in each. Use it to show the user which regions are in scope.",
+      inputSchema: {},
+      annotations: READ_ONLY
+    },
+    async () => result(await listZones(ctx))
+  );
+  server.registerTool(
+    "search_place",
+    {
+      title: "Find a place by name",
+      description: 'Turns a soi, road or BTS/MRT/ARL/SRT station name (English or Thai, eg "Sukhumvit 38", "Thong Lo", "\u0E17\u0E2D\u0E07\u0E2B\u0E25\u0E48\u0E2D") or a pasted "lat, lng" into coordinates, with whether it is in \u0E22.9, its zone, and the nearest station. Offline gazetteer from OpenStreetMap, no geocoding service. A place is not a plot: ask the user for the plot corners next.',
+      inputSchema: {
+        query: z.string().max(100).optional().describe('Place name or "lat, lng"'),
+        limit: z.number().int().min(1).max(20).optional().describe("Most results to return (default 8)")
+      },
+      annotations: READ_ONLY
+    },
+    async ({ query, limit }) => result(await searchPlace(ctx, query, limit))
   );
   server.registerTool(
     "find_zone",

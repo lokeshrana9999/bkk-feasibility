@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Area, RowFeature, ZonePoly } from '../src/site/data';
 import { otherZones, roadNameMap, toRows, toZones, type FC } from '../src/site/parse';
+import type { Place } from '../src/site/places';
 
 /** Reads one data file by its path under /data (eg "row/82.json"); null when it is missing. */
 export type Source = (rel: string) => Promise<unknown | null>;
@@ -56,6 +57,7 @@ export class DataUnavailable extends Error {
 /** Lazily loaded, cached site data. One instance per process (warm function instances reuse it). */
 export class SiteData {
   private areasP: Promise<Area[]> | null = null;
+  private placesP: Promise<Place[]> | null = null;
   private y9P: Promise<ZonePoly[]> | null = null;
   private allP: Promise<ZonePoly[]> | null = null;
   private rows = new Map<number, Promise<RowFeature[]>>();
@@ -81,6 +83,11 @@ export class SiteData {
       set(p);
     }
     return p;
+  }
+
+  /** Named places (zones, roads, sois, stations) for search_place and list_zones. */
+  places(): Promise<Place[]> {
+    return this.keep(() => this.placesP, (p) => (this.placesP = p), () => this.need('gazetteer.json', (j: { e: Place[] }) => j.e ?? []));
   }
 
   areas(): Promise<Area[]> {
