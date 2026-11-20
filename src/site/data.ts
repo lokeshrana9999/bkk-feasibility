@@ -136,6 +136,28 @@ export function loadRow(area: Area): Promise<RowFeature[] | null> {
   return p;
 }
 
+/** Thai road name reduced to a key that matches across sources ("ซอยนภาศัพท์ 2" ~ "ซอยนภาศัพท์2"). */
+export const nameKey = (s: string) => s.replace(/^(ถนน|ซอย|ทาง)/, '').replace(/[\s.()-]+/g, '');
+
+const enCache = new Map<number, Promise<Map<string, string>>>();
+/** English road names (OSM name:en) by Thai name key, for edge labels. Empty on failure. */
+export function loadRoadNames(area: Area): Promise<Map<string, string>> {
+  let p = enCache.get(area.id);
+  if (!p) {
+    p = getJson<FC>(`${BASE}${area.files.roads ?? `roads/${area.id}.json`}`).then((fc) => {
+      const m = new Map<string, string>();
+      for (const f of fc?.features ?? []) {
+        const th = f.properties.name;
+        const en = f.properties.nameEn;
+        if (typeof th === 'string' && typeof en === 'string' && en) m.set(nameKey(th), en);
+      }
+      return m;
+    });
+    enCache.set(area.id, p);
+  }
+  return p;
+}
+
 /** Height fallback by footprint when a building has neither a height nor a floor count. */
 function defaultHeight(a: number): number {
   if (a < 80) return 6;

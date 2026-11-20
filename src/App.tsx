@@ -3,7 +3,7 @@ import type { BuildingType, EngineError, EngineInput, EngineResult } from './eng
 import { MapView, type MapHandle } from './scene/MapView';
 import { buildLayers } from './scene/layers';
 import {
-  loadAreas, loadBuildings, loadRow, loadZonesAll, loadZonesY9, type Area, type Building, type RowFeature, type ZonePoly,
+  loadAreas, loadBuildings, loadRoadNames, loadRow, loadZonesAll, loadZonesY9, nameKey, type Area, type Building, type RowFeature, type ZonePoly,
 } from './site/data';
 import { areaM2, bboxHit, bboxOf, centroidLL, makeFrame, pointInRing, selfIntersects, toXY, type LL } from './site/geo';
 import type { DetectedEdge } from './site/roads';
@@ -59,6 +59,7 @@ export default function App() {
   const [retry, setRetry] = useState(0);
   const [rowFc, setRowFc] = useState<unknown>(null);
   const [buildings, setBuildings] = useState<Building[]>([]);
+  const [enNames, setEnNames] = useState<Map<string, string>>(new Map());
 
   const [result, setResult] = useState<EngineResult | null>(null);
   const [engineError, setEngineError] = useState<EngineError | null>(null);
@@ -178,6 +179,8 @@ export default function App() {
       }
       setBuildings(b);
       setBldFor(activeArea.id);
+      // names only after the geometry: they are a nicety
+      loadRoadNames(activeArea).then((m) => live && setEnNames(m));
     });
     return () => {
       live = false;
@@ -189,7 +192,16 @@ export default function App() {
   const plotRows = useMemo(() => (plotArea && rowsFor === plotArea.id ? rows : NONE), [plotArea, rowsFor, rows]);
   const prep = useMemo(() => (ring && ringOk && zoneHit && rowsReady ? preparePlot(ring, plotRows) : null), [ring, ringOk, zoneHit, rowsReady, plotRows]);
   const eRing = prep && prep.ring.length >= 3 ? prep.ring : null;
-  const detected = useMemo(() => (eRing && prep ? prep.edges : []), [eRing, prep]);
+  // English labels for Thai road names where OSM has one (the Thai name stays the engine's key)
+  const detected = useMemo(() => {
+    const d = eRing && prep ? prep.edges : [];
+    if (!enNames.size) return d;
+    return d.map((e) => {
+      if (!e.label || /[a-z]/i.test(e.label)) return e;
+      const en = enNames.get(nameKey(e.label));
+      return en ? { ...e, label: en } : e;
+    });
+  }, [eRing, prep, enNames]);
 
   // edge edits belong to one plot's edges: a new plot or a different corner count starts fresh
   // (or from the share link that brought the plot)
