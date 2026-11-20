@@ -102,6 +102,20 @@ describe('Codex review regressions', () => {
     expect(r.regimes.chosen).toBe('low');
   });
 
+  it('D1 a road 25 cm away (a strip of other land) is not frontage: MR 33 art. 2 and zoning art. 36 need the plot to abut the road (ติด)', () => {
+    // was: gap <= 0.5 m counted as touching, so the high regime opened and the office cap was
+    // waived. Now only float noise (1 mm) is tolerated.
+    const r = ok({ edges: [road(12, { gap: 0.25 }), P, P, P] });
+    expect(r.regimes.high.allowed).toBe(false);
+    expect(ok({ edges: [road(12, { gap: 0.001 }), P, P, P] }).regimes.high.allowed).toBe(true);
+    const office = ok({
+      ring: [[0, 0], [100, 0], [100, 50], [0, 50]], edges: [road(16, { gap: 0.5 }), P, road(12, { name: 'Soi' }), P], type: 'office',
+    });
+    expect(office.regimes.high.caps.some((c) => c.id === 'Z16-OFFICE')).toBe(true);
+    for (const d of office.designs) expect(d.gfa).toBeLessThanOrEqual(10000 + 1e-6);
+    expect(fails(office)).toEqual([]);
+  });
+
   it('#7 a high OSR no longer wipes out the high regime: footprint and GFA are solved together', () => {
     // was: high permitted 0 m2, low chosen. A legal 10,868 m2 tower exists (13 x 836 m2).
     const r = ok({ zone: { code: 'Y9', far: 20, osrPct: 10 } });

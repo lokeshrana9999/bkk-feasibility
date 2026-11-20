@@ -10,7 +10,7 @@
 // Every case where the engine is laxer fails the test unless it is explained by an entry of
 // ALLOW below, and every ALLOW entry is a row of oracle/DISAGREEMENTS.md (checked at the end).
 // An entry explains a case only by substitution: the oracle is re-run with that entry's
-// engine reading applied to the inputs (eg gap <= 0.5 m snapped to 0) and must then agree;
+// engine reading applied to the inputs (eg gap <= 1 mm snapped to 0) and must then agree;
 // a laxer case that no allowed substitution reconciles fails.
 //
 // Deliberate engine strictness (the engine requires more than the oracle; fine, counted in the
@@ -56,18 +56,20 @@ const EPS = 1e-6;
 // Allowlist: each id is a row of oracle/DISAGREEMENTS.md
 
 const ALLOW = {
-  D1: 'frontage gap tolerance: the engine counts a road with gap <= 0.5 m as abutting (MR 33 art. 2, MR2556 art. 36 "ติด"); the oracle needs gap 0',
-  D2: 'frontage length: the engine accepts 11.999 m as 12 m and 15.999 m as 16 m (1 mm float tolerance); the oracle needs the full length',
-  // D3, D6, D7 were engine bugs, fixed: no allowance (a laxer case now fails this test)
+  D2: 'frontage float tolerances (engineering, kept): the engine accepts 11.999 m as 12 m and 15.999 m as 16 m, and a gap of at most 1 mm as abutting; the oracle needs the full length and gap 0',
+  // D1 (0.5 m gap tolerance): the engine now follows the oracle (gap <= 1 mm, float noise,
+  // covered by D2). D3, D6, D7 were engine bugs, fixed. None has an allowance: a laxer case
+  // now fails this test.
 } as const;
 type AllowId = keyof typeof ALLOW;
 
 /** The engine's reading of a frontage, applied to the oracle's input (one per allow id). */
 const SNAP: Partial<Record<AllowId, (f: O.Frontage) => O.Frontage>> = {
-  D1: (f) => (f.gapM > 0 && f.gapM <= 0.5 ? { ...f, gapM: 0 } : f),
   D2: (f) => {
-    for (const need of [12, 16]) if (f.lengthM >= need - 0.001 && f.lengthM < need) return { ...f, lengthM: need };
-    return f;
+    let g = f;
+    if (g.gapM > 0 && g.gapM <= 0.001) g = { ...g, gapM: 0 };
+    for (const need of [12, 16]) if (g.lengthM >= need - 0.001 && g.lengthM < need) return { ...g, lengthM: need };
+    return g;
   },
 };
 
@@ -299,7 +301,7 @@ describe('oracle differential: open space (engine requirement >= oracle max)', (
 interface Piece { W: number; L: number; g: number }
 const PW = [8, 9.999, 10, 11.999, 12, 15.999, 16, 17.999, 18, 30];
 const PL = [5, 11.998, 11.999, 11.9995, 12, 15.999, 16, 40];
-const PG = [0, 1e-6, 0.25, 0.5, 0.5 + 1e-6, 2];
+const PG = [0, 1e-6, 0.001, 0.001 + 1e-6, 0.25, 0.5, 0.5 + 1e-6, 2];
 const SINGLE: Piece[][] = PW.flatMap((W) => PL.flatMap((L) => PG.map((g) => [{ W, L, g }])));
 const REP: Piece[] = [
   { W: 18, L: 5, g: 0 }, { W: 10, L: 12, g: 0 }, { W: 16, L: 11.999, g: 0 }, { W: 12, L: 40, g: 0.25 }, { W: 30, L: 40, g: 2 },
@@ -342,7 +344,7 @@ describe('oracle differential: gates and caps (engine permits => oracle permits;
         diff.case();
         const b: O.Building = { use: 'condo', heightM: 60, storeys: 20, gfaM2: G, largestFloorM2: G / 20 };
         const agrees = (f: O.Frontage[]) => blocking(O.gates(b, f, false).reasons).filter((r) => MR33_GATES.has(r.cite)).length === 0;
-        if (!agrees(fs)) diff.lax(`${descr(ps)}, high-rise ${G} m2: engine opens the high regime, oracle blocks (${blocking(O.gates(b, fs, false).reasons).map((r) => r.cite).join(', ')})`, explain(fs, ['D1', 'D2'], agrees));
+        if (!agrees(fs)) diff.lax(`${descr(ps)}, high-rise ${G} m2: engine opens the high regime, oracle blocks (${blocking(O.gates(b, fs, false).reasons).map((r) => r.cite).join(', ')})`, explain(fs, ['D2'], agrees));
       }
     }
     diff.done();
@@ -361,7 +363,7 @@ describe('oracle differential: gates and caps (engine permits => oracle permits;
           diff.case();
           const b: O.Building = { use: type, heightM: h, storeys: regime === 'high' ? 20 : 7, gfaM2: G, largestFloorM2: G / 7 };
           const blocks = (f: O.Frontage[]) => blocking(O.gates(b, f, nearStation, rooms(G)).reasons).filter((r) => ZONING_GATES.has(r.cite));
-          if (blocks(fs).length) diff.lax(`${type} ${regime} ${G} m2 (${rooms(G)} rooms), ${descr(ps)}${nearStation ? ', station' : ''}: engine permits, oracle blocks (${blocks(fs).map((r) => r.cite).join(', ')})`, explain(fs, ['D1', 'D2'], (f) => blocks(f).length === 0));
+          if (blocks(fs).length) diff.lax(`${type} ${regime} ${G} m2 (${rooms(G)} rooms), ${descr(ps)}${nearStation ? ', station' : ''}: engine permits, oracle blocks (${blocks(fs).map((r) => r.cite).join(', ')})`, explain(fs, ['D2'], (f) => blocks(f).length === 0));
         }
       }
     }
@@ -380,7 +382,7 @@ describe('oracle differential: gates and caps (engine permits => oracle permits;
         diff.case();
         const agrees = (f: O.Frontage[]) => capOk(e, oracleCaps(type, A, far, f, false, regime === 'high', false));
         const oCaps = oracleCaps(type, A, far, fs, false, regime === 'high', false);
-        if (!agrees(fs)) diff.lax(`${type} ${regime} A ${A} FAR ${far}, ${descr(ps)}: engine cap ${e} > oracle ${JSON.stringify(oCaps.map((c) => [c.cite, c.value]))}`, explain(fs, ['D1', 'D2'], agrees));
+        if (!agrees(fs)) diff.lax(`${type} ${regime} A ${A} FAR ${far}, ${descr(ps)}: engine cap ${e} > oracle ${JSON.stringify(oCaps.map((c) => [c.cite, c.value]))}`, explain(fs, ['D2'], agrees));
         else if (e < Math.min(...oCaps.map((c) => c.value)) - TOL) {
           const bind = eCaps.reduce((m, c) => (c.value < m.value ? c : m)).id;
           diff.strict(bind === 'MR33-1' ? 'low regime 9,999 m2 (oracle: < 10,000 only without a 12 m frontage, else none)' : bind);
@@ -398,7 +400,7 @@ describe('oracle differential: gates and caps (engine permits => oracle permits;
       const eOffice = Env.fixedCaps(s, 'high').find((c) => c.id === 'Z16-OFFICE')?.value ?? Infinity;
       diff.case();
       const agrees = (f: O.Frontage[]) => capOk(eOffice, oracleCaps('office', 5000, 12, f, nearStation, true, true));
-      if (!agrees(fs)) diff.lax(`office, ${descr(ps)}${nearStation ? ', station' : ''}: engine has no office cap, oracle caps 10,000 m2`, explain(fs, ['D1', 'D2'], agrees));
+      if (!agrees(fs)) diff.lax(`office, ${descr(ps)}${nearStation ? ', station' : ''}: engine has no office cap, oracle caps 10,000 m2`, explain(fs, ['D2'], agrees));
     }
     diff.done();
   });
@@ -414,7 +416,7 @@ describe('oracle differential: gates and caps (engine permits => oracle permits;
         diff.case();
         const b: O.Building = { use: 'hotel', heightM: 22.9, storeys: 7, gfaM2: G, largestFloorM2: G / 7 };
         const blocks = (f: O.Frontage[]) => blocking(O.gates(b, f, nearStation, rooms(G)).reasons).filter((r) => r.cite === 'mr2556.txt:1412');
-        if (blocks(fs).length) diff.lax(`hotel ${G} m2 (${rooms(G)} rooms), ${descr(ps)}: engine permits, oracle blocks`, explain(fs, ['D1', 'D2'], (f) => blocks(f).length === 0));
+        if (blocks(fs).length) diff.lax(`hotel ${G} m2 (${rooms(G)} rooms), ${descr(ps)}: engine permits, oracle blocks`, explain(fs, ['D2'], (f) => blocks(f).length === 0));
       }
     }
     diff.done();
@@ -498,14 +500,14 @@ describe('oracle differential: wider-road relief (engine eligible => oracle elig
 // ---------------------------------------------------------------------------
 
 describe('oracle differential: allowlist and summary', () => {
-  it('every allowlist id is a row of oracle/DISAGREEMENTS.md, and the grids reach D1 and D2', () => {
+  it('every allowlist id is a row of oracle/DISAGREEMENTS.md, and the grids reach D2', () => {
     const log = fs.readFileSync(path.join(root, 'oracle', 'DISAGREEMENTS.md'), 'utf8');
     for (const id of Object.keys(ALLOW)) expect(log, `DISAGREEMENTS.md has no row ${id}`).toMatch(new RegExp(`^\\|\\s*${id}\\s*\\|`, 'm'));
     // rows referenced by comments here and in property.test.ts (not comparable / documented)
     for (const id of ['D4', 'D5', 'D8', 'D9', 'D12']) expect(log).toMatch(new RegExp(`^\\|\\s*${id}\\s*\\|`, 'm'));
     const hit = new Set<string>();
     for (const s of SUMMARY.values()) for (const k of Object.keys(s.allowed)) for (const id of k.split('+')) hit.add(id.split(' ')[0]!);
-    if (SUMMARY.size >= 10) for (const id of ['D1', 'D2']) expect(hit, `no case needed ${id}: is the allowlist entry stale?`).toContain(id);
+    if (SUMMARY.size >= 10) for (const id of ['D2']) expect(hit, `no case needed ${id}: is the allowlist entry stale?`).toContain(id);
   });
 
   it('summary: laxer cases allowed per disagreement, and the main categories of engine strictness', () => {

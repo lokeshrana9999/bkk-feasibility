@@ -174,8 +174,9 @@ export const PARAMS = Object.freeze({
   // Two road chains meeting at a turn smaller than this are one road changing width, not a corner.
   cornerTurnDeg: 30,
   // A road edge counts as frontage (MR 33 art. 2, zoning art. 16 "on the road") only if the
-  // plot touches it: gap up to this much is map noise; more means other land in between.
-  frontageGapTol: 0.5, // m, written call
+  // plot abuts it (ติด): any gap is someone's land, so only float noise is tolerated. Was 0.5 m
+  // (a map-noise call); oracle disagreement D1: the engine follows the oracle's gap = 0 reading.
+  frontageGapTol: 0.001, // m, float noise only
   maxFloors: 60,
   minPlateArea: 40, // m2, smaller parts are dropped
   slivers: 1.5, // m, opening width

@@ -295,10 +295,10 @@ describe('rule claims (breakpoint grids)', () => {
     claim.done('clamp direction');
   });
 
-  it('frontage: touchesPlot is gap <= 0.5 m, isGateFrontage is a touching road >= 12 m (1 mm float tolerance), and the checker and the engine agree on it (Codex #6, #8)', () => {
+  it('frontage: touchesPlot is gap <= 1 mm (D1), isGateFrontage is a touching road >= 12 m (1 mm float tolerance), and the checker and the engine agree on it (Codex #6, #8)', () => {
     const claim = new Claim();
     const LS = grid([12 - 0.001, 12], 0.5, 40);
-    const GS = [0, 0.25, 0.5 - EPS, 0.5, 0.5 + EPS, 1, 2, 50];
+    const GS = [0, 0.001 - EPS, 0.001, 0.001 + EPS, 0.25, 0.5, 1, 2, 50];
     for (const role of ['private', 'canal'] as const) claim.check(!touchesPlot(chain(role, role === 'canal' ? 12 : undefined)), () => `${role} touches`);
     for (const W of [9.999, 10, 18, 30]) for (const g of GS) {
       let prevGate = false;
@@ -340,7 +340,7 @@ describe('rule claims (breakpoint grids)', () => {
       office: [9.999, 10, 15.999, 16, 17.999, 18],
       hotel: [9.999, 10, 11.999, 12, 17.999, 18],
     };
-    // frontage: 12 m touching, 11.998 m touching (too short), 12 m just beyond the 0.5 m gap.
+    // frontage: 12 m touching, 11.998 m touching (too short), 12 m with a 0.5 m gap (not abutting).
     // FAR 20 (MR 33 art. 5's FAR 10 cap) on condos only: the other types add nothing to it.
     const SCEN: { type: BuildingType; W: number; g: number; L: number; station: boolean; far: number }[] = [];
     for (const type of ['condo', 'office', 'hotel'] as const) for (const W of WIDTHS[type]!) {
