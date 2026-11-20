@@ -25,7 +25,13 @@ Rings are `[lon, lat]` pairs, longitude first, open or closed, 3-500 corners, at
 
 ### Open the result in the 3D app
 
-`evaluate_plot` returns `shareLink`, a web-app URL that opens the plot in 3D with the same inputs and so the same figures. No database: the whole state is in the URL fragment, in the app's own share format (`#p=lon,lat;...&t=type&e=edge overrides&s=station&rl=relief&fh=floor heights&hr=hotel rooms`), and the app rebuilds everything from it. The MCP evaluates the outline rounded to 7 decimals (about 1 cm), exactly as the link writes it, so the app and the MCP compute from the same corners; `test-mcp` checks the link alone reproduces each evaluation. `detect_roads` also returns an `appLink` (condo, detected roads). A plot given in metres has no share link, since it has no place on the map.
+`evaluate_plot` returns `shareLink`, a web-app URL that opens the plot in 3D with the same inputs and so the same figures. No database: the whole state is in the URL fragment, in the app's own share format (`#p=lon,lat;...&t=type&e=edge overrides&s=station&rl=relief&fh=floor heights&hr=hotel rooms`), and the app rebuilds everything from it. The MCP evaluates the outline rounded to 7 decimals (about 1 cm), exactly as the link writes it, so the app and the MCP compute from the same corners; `test-mcp` checks the link alone reproduces each evaluation. `detect_roads` also returns an `appLink` (condo, detected roads).
+
+A link is handed out only when it is possible: before returning it, the server reads it back the way the app does and checks it yields the very inputs it evaluated (outline, type, edge overrides, station, relief, floor heights, hotel rooms). Otherwise the field is `null` and `shareLinkUnavailable` gives the reason, the questions to ask the user and what to do next. A plot given in metres, for example, has no place on the map, so the agent is told to ask where the plot is and call again with `[lon, lat]` corners.
+
+### Asking instead of guessing
+
+When an input that decides the result is missing (the plot, the building type, the zone of a metres plot, the site for `get_rules`), the tool answers `code: "needs-detail"` with `missing` and `askUser` questions instead of assuming a default. Every typed error carries `then` (what to do next) and, where only the user can fix it (crossing outline, plot outside ย.9, too few corners), `askUser`. A successful `evaluate_plot` adds `checkWithUser` when the result turns on map facts worth confirming: no road along any side, a large part of the outline cut away as right-of-way, or a plot split between zones.
 
 ### Connect
 

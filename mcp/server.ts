@@ -11,15 +11,18 @@ export const SERVER_VERSION = '1.0.0';
 
 const INSTRUCTIONS = `Bangkok zone ย.9 (Y9) building feasibility, read-only and deterministic (no LLM inside).
 Typical flow: find_zone(lat, lng) to check the site is in ย.9 -> detect_roads(ring) to see which plot edges face a road and how wide it is -> evaluate_plot(ring, building_type) for the rules, the low- and high-rise envelopes, three designs with rule checklists and a share link that opens the plot in the 3D web app.
-Rings are [lon, lat] pairs (longitude first), at most ${MAX_VERTICES} corners and 200,000 m2. Every result is a feasibility aid, not a legal opinion; say so when you report it.`;
+Rings are [lon, lat] pairs (longitude first), at most ${MAX_VERTICES} corners and 200,000 m2. Every result is a feasibility aid, not a legal opinion; say so when you report it.
+Never guess a plot location, corners, road widths or the building type. If you lack one, call the tool without it: it answers code "needs-detail" with askUser questions. Put those questions (and any askUser / checkWithUser items in other results) to the user, then call again.
+Only share app links the tools return (shareLink, appLink). When a link is null, the result says why and what to ask; never build an app URL yourself.`;
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
 const ring = z
   .array(z.array(z.number()).describe('[lon, lat] in decimal degrees, longitude first (or [x, y] metres with units "m")'))
   .max(5000)
-  .describe(`Plot outline: [lon, lat] corners, open or closed, 3-${MAX_VERTICES} corners, at most 200,000 m2`);
-const buildingType = z.enum(TYPES).describe('condo | apartment | office | hotel');
+  .optional()
+  .describe(`Plot outline: [lon, lat] corners, open or closed, 3-${MAX_VERTICES} corners, at most 200,000 m2. If you do not have the corners, omit it: the tool says what to ask the user`);
+const buildingType = z.enum(TYPES).optional().describe('condo | apartment | office | hotel. Ask the user if unknown; omit rather than guess and the tool says what to ask');
 
 function result(v: { ok: boolean }): CallToolResult {
   return {
@@ -90,7 +93,7 @@ export function createServer(ctx: Ctx): McpServer {
     {
       title: 'Evaluate a plot',
       description:
-        'Full feasibility of a plot: the rules applied with their values, both regimes (low-rise and high-rise: floors, height, permitted floor area, FAR reached, binding rule), three designs with pass / fail / not-assessed checklists, and a share link that opens the plot in the 3D web app. Roads are detected from the city map; correct them with edges overrides (indices from detect_roads). With units "m" the ring is in metres (an abstract plot): give zone and the road edges yourself.',
+        'Full feasibility of a plot: the rules applied with their values, both regimes (low-rise and high-rise: floors, height, permitted floor area, FAR reached, binding rule), three designs with pass / fail / not-assessed checklists, and shareLink: a web-app URL that opens the plot in 3D with the same inputs, given only when the app is checked to rebuild the same inputs from it (otherwise shareLinkUnavailable says why and what to ask). Roads are detected from the city map; correct them with edges overrides (indices from detect_roads). With units "m" the ring is in metres (an abstract plot, no link): give zone and the road edges yourself. Missing inputs return needs-detail with the questions to ask the user.',
       inputSchema: {
         ring,
         building_type: buildingType,

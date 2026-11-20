@@ -72,7 +72,7 @@ ${TOOLS.map(([n, i, r]) => `<tr><td><code>${n}</code></td><td>${esc(i)}</td><td>
 </table>
 <p>Resource <code>rules://y9</code>: the full cited rule table. Prompt <code>feasibility_report</code>: a short report for a plot, using the tools.</p>
 <p class="mut">Typical flow: <code>find_zone</code> → <code>detect_roads</code> (check the widths; pass corrections as <code>edges: [{index, role, width, gap}]</code>) → <code>evaluate_plot</code> → open its <code>shareLink</code> to see the plot in 3D.</p>
-<p class="mut"><code>shareLink</code> opens the web app on the same plot with the same inputs (edge overrides, station, relief, floor heights, hotel rooms) and so the same figures. Nothing is stored: the whole state sits in the URL after <code>#</code>.</p>
+<p class="mut"><code>shareLink</code> opens the web app on the same plot with the same inputs (edge overrides, station, relief, floor heights, hotel rooms) and so the same figures. Nothing is stored: the whole state sits in the URL after <code>#</code>. A link is given only when the app is checked to rebuild the same inputs from it; otherwise the result says why and what to ask the user. Missing inputs (plot, building type) return <code>needs-detail</code> with the questions to ask, never a guessed default.</p>
 
 <h2>Scope and limits</h2>
 <ul>

@@ -2908,6 +2908,12 @@ var toEngineEdge = (e) => {
   if (e.name) out.name = e.name;
   return out;
 };
+var TYPES2 = [
+  { id: "condo", label: "Condo" },
+  { id: "apartment", label: "Apartment" },
+  { id: "office", label: "Office" },
+  { id: "hotel", label: "Hotel" }
+];
 function shapeOn(A, B, D, uv) {
   return uv.map(([u, v]) => [A[0] + u * (B[0] - A[0]) + v * (D[0] - A[0]), A[1] + u * (B[1] - A[1]) + v * (D[1] - A[1])]);
 }
@@ -2926,6 +2932,75 @@ var DEMOS = [
   }
 ];
 var ROLE_CODE = { road: "r", canal: "c", private: "p" };
+var CODE_ROLE = { r: "road", c: "canal", p: "private" };
+function readHash(hash = window.location.hash) {
+  const h = new URLSearchParams(hash.replace(/^#/, ""));
+  const out = { bad: [] };
+  const p = h.get("p");
+  if (p !== null) {
+    const ring2 = p.split(";").map((s2) => s2.split(",").map(Number));
+    if (ring2.length >= 3 && ring2.length <= 2e3 && ring2.every((q) => q.length === 2 && q.every(Number.isFinite) && Math.abs(q[0]) <= 180 && Math.abs(q[1]) <= 90)) out.ring = ring2;
+    else out.bad.push("plot outline");
+  }
+  const t = h.get("t");
+  if (t !== null) {
+    if (TYPES2.some((x) => x.id === t)) out.type = t;
+    else out.bad.push("building type");
+  }
+  const e = h.get("e");
+  if (e !== null && e !== "") {
+    const edges = {};
+    let ok = true;
+    for (const part of e.split(",")) {
+      const m = part.match(/^(\d{1,3}):([rcp])(\d+(?:\.\d+)?)?(?:g(\d+(?:\.\d+)?))?$/);
+      if (!m) {
+        ok = false;
+        continue;
+      }
+      const role = CODE_ROLE[m[2]];
+      const o = { role };
+      if (m[3] !== void 0) {
+        const w = Number(m[3]);
+        if (w >= 1 && w <= 100 && role !== "private") o.width = w;
+        else ok = false;
+      }
+      if (m[4] !== void 0) {
+        const g = Number(m[4]);
+        if (g >= 0 && g <= 50 && role !== "private") o.gap = g;
+        else ok = false;
+      }
+      edges[Number(m[1])] = o;
+    }
+    out.edges = edges;
+    if (!ok) out.bad.push("edge edits");
+  }
+  const s = h.get("s");
+  if (s !== null) {
+    if (s === "1" || s === "0") out.station = s === "1";
+    else out.bad.push("station flag");
+  }
+  const rl = h.get("rl");
+  if (rl !== null) {
+    if (rl === "1" || rl === "0") out.relief = rl === "1";
+    else out.bad.push("relief flag");
+  }
+  const fh = h.get("fh");
+  if (fh !== null) {
+    const m = fh.match(/^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$/);
+    const g = m ? Number(m[1]) : NaN;
+    const ty = m ? Number(m[2]) : NaN;
+    if (g >= 2.4 && g <= 10 && ty >= 2.4 && ty <= 10) out.floorH = { ground: g, typical: ty };
+    else out.bad.push("floor heights");
+  }
+  const hr = h.get("hr");
+  if (hr !== null) {
+    const n = /^\d{1,6}$/.test(hr) ? Number(hr) : NaN;
+    if (n >= 1 && n <= MAX_HOTEL_ROOMS) out.hotelRooms = n;
+    else out.bad.push("hotel rooms");
+  }
+  return out;
+}
+var MAX_HOTEL_ROOMS = 1e5;
 function hashOf(st) {
   const parts = [];
   if (st.ring) parts.push(`p=${st.ring.map((q) => `${q[0].toFixed(7)},${q[1].toFixed(7)}`).join(";")}`);
@@ -2942,9 +3017,39 @@ function hashOf(st) {
 // mcp/core.ts
 var REPO_URL = "https://github.com/lokeshrana9999/bkk-feasibility";
 var DISCLAIMER = "Feasibility aid, not a legal opinion. Figures come from a deterministic reading of the cited Bangkok rules on city map data; confirm with a licensed Thai architect or the district office before relying on them.";
-var TYPES2 = ["condo", "apartment", "office", "hotel"];
+var TYPES3 = ["condo", "apartment", "office", "hotel"];
 var MAX_VERTICES = LIMITS.maxVertices;
 var MAX_AREA = LIMITS.maxArea;
+var ASK_RULE = "Ask the user; do not guess or invent these details.";
+var NEXT = {
+  "too-few-points": { askUser: ["What are the corners of the plot, in order around it? (at least 3 [lon, lat] points)"], then: `${ASK_RULE} Then call again with the full ring.` },
+  "too-many-vertices": { then: `Simplify the outline to at most ${LIMITS.maxVertices} corners and call again.` },
+  "too-large": { askUser: ["Is this the right plot? The outline covers more than 200,000 m2 (20 ha); what are its actual corners?"], then: ASK_RULE },
+  "zero-area": { askUser: ["What are the plot corners, in order around the plot? The ones given enclose no area."], then: ASK_RULE },
+  "self-intersection": { askUser: ["Can you list the plot corners in order around the plot (clockwise or anticlockwise)? The given order makes the outline cross itself."], then: ASK_RULE },
+  "invalid-input": { then: "Fix the argument named in the message. If the value came from the user, ask them to confirm it rather than guessing." },
+  "invalid-override": { then: "Use edge indices from detect_roads; widths 1-100 m, gaps 0-50 m. If the user described the roads, ask them which side of the plot each road is on." },
+  "unknown-zone": { then: "Call find_zone with the site lat/lng to get the zone code, or ask the user where the site is." },
+  "outside-scope": { askUser: ["This tool covers Bangkok zone \u0E22.9 only. Do you have a plot inside \u0E22.9?"], then: "Tell the user the zone found and that it is out of scope. No app link is possible for this plot." },
+  "no-land": { askUser: ["Can you check the plot corners? As given, the whole outline lies on a public road, canal or rail right-of-way."], then: ASK_RULE },
+  "data-unavailable": { then: "Retry in a few seconds." },
+  "engine-error": { then: "Report the message to the user; do not retry with guessed values." }
+};
+function needsDetail(missing, why) {
+  return {
+    ok: false,
+    code: "needs-detail",
+    message: `More detail is needed: ${missing.map((m) => m.field).join(", ")}. ${why}`,
+    missing,
+    askUser: missing.map((m) => m.ask),
+    then: `${ASK_RULE} Then call again with the answers.`
+  };
+}
+var ASK_RING = {
+  field: "ring",
+  ask: "Where exactly is the plot? Please give its corners in order (latitude/longitude of each, eg from a map pin), or a map pin plus the plot's frontage, depth and which side faces the road."
+};
+var ASK_TYPE = { field: "building_type", ask: "What do you want to build: a condo, an apartment building, an office or a hotel?" };
 var fail2 = (code, message, extra = {}) => ({ ok: false, code, message, ...extra });
 var r2 = (v) => Math.round(v * 100) / 100;
 var r3 = (v) => Math.round(v * 1e3) / 1e3;
@@ -2958,12 +3063,18 @@ var zoneOut = (z2) => ({
   ...z2.use ? { use: z2.use } : {}
 });
 async function guard(f) {
+  let r;
   try {
-    return await f();
+    r = await f();
   } catch (e) {
-    if (e instanceof DataUnavailable) return fail2("data-unavailable", `${e.message}; try again shortly`);
-    return fail2("engine-error", `internal error: ${e instanceof Error ? e.message : String(e)}`);
+    r = e instanceof DataUnavailable ? fail2("data-unavailable", `${e.message}; try again shortly`) : fail2("engine-error", `internal error: ${e instanceof Error ? e.message : String(e)}`);
   }
+  const err2 = r;
+  if (err2 && err2.ok === false && !err2.then) {
+    const n = NEXT[err2.code];
+    if (n) return { ...err2, ...n.askUser ? { askUser: n.askUser } : {}, then: n.then };
+  }
+  return r;
 }
 var isNum3 = (v) => typeof v === "number" && Number.isFinite(v);
 function readRing(raw, units) {
@@ -3000,11 +3111,11 @@ function readOverrides(raw, n) {
     }
     if (o.width !== void 0) {
       if (!isNum3(o.width) || o.width < LIMITS.minWidth || o.width > LIMITS.maxWidth) return fail2("invalid-override", `edge ${i}: width must be ${LIMITS.minWidth}-${LIMITS.maxWidth} m`, { index: i });
-      e.width = o.width;
+      e.width = r3(o.width);
     }
     if (o.gap !== void 0) {
       if (!isNum3(o.gap) || o.gap < 0 || o.gap > LIMITS.maxGap) return fail2("invalid-override", `edge ${i}: gap must be 0-${LIMITS.maxGap} m`, { index: i });
-      e.gap = o.gap;
+      e.gap = r3(o.gap);
     }
     if (o.name !== void 0 && o.role !== "private") names[i] = String(o.name).slice(0, 80);
     map[i] = e;
@@ -3035,8 +3146,36 @@ async function site(ctx, drawn) {
   return { drawn, zone: zs.hit.zone, share: zs.hit.share, others: zs.others, area: area2, prep, edges };
 }
 var LINK_NOTE = "Opens the web app on this plot in 3D with the same inputs (outline, building type, edge overrides, station, relief, floor heights, hotel rooms) and so the same figures. Everything is in the part after #; nothing is stored on a server.";
-function appLink(ctx, st) {
-  return `${ctx.appUrl}/${hashOf(st)}`;
+var MAX_LINK = 3e4;
+var normEdges = (e) => Object.keys(e).map(Number).sort((a, b) => a - b).map((i) => [i, e[i].role, e[i].role === "private" ? null : e[i].width ?? null, e[i].role === "private" ? null : e[i].gap ?? null]);
+function verifiedLink(ctx, st) {
+  if (!st.ring) return { url: null, reason: "the plot has no outline on the map" };
+  const hash = hashOf(st);
+  const url = `${ctx.appUrl}/${hash}`;
+  if (url.length > MAX_LINK) return { url: null, reason: `the link would be ${url.length.toLocaleString("en-US")} characters (limit ${MAX_LINK.toLocaleString("en-US")}); simplify the outline` };
+  const h = readHash(hash);
+  if (h.bad.length) return { url: null, reason: `the app could not read back: ${h.bad.join(", ")}` };
+  const want = {
+    ring: st.ring,
+    type: st.type,
+    edges: normEdges(st.edges),
+    station: st.station,
+    relief: st.relief,
+    floorH: st.floorH ?? null,
+    hotelRooms: st.type === "hotel" ? st.hotelRooms ?? null : null
+  };
+  const got = {
+    ring: h.ring ?? null,
+    type: h.type ?? "condo",
+    edges: normEdges(h.edges ?? {}),
+    station: h.station ?? false,
+    relief: h.relief ?? true,
+    floorH: h.floorH ?? null,
+    hotelRooms: h.hotelRooms ?? null
+  };
+  const off = Object.keys(want).filter((k) => JSON.stringify(want[k]) !== JSON.stringify(got[k]));
+  if (off.length) return { url: null, reason: `the app would not get the same ${off.join(", ")}` };
+  return { url };
 }
 var edgeRows = (ring2, edges) => edges.map((e, i) => ({
   index: i,
@@ -3055,7 +3194,7 @@ function about(ctx) {
     what: "Given a plot in Bangkok zone \u0E22.9 (Y9, high-density residential), returns the rules that apply with their cited Thai articles, the buildable envelope under both the low-rise and the high-rise regime (floors, height, permitted floor area, binding rule) and three massing designs checked rule by rule. Same deterministic engine as the web app; no LLM, no keys, read-only.",
     scope: {
       zone: "\u0E22.9 (Y9) of the Bangkok Comprehensive Plan, Ministerial Regulation B.E. 2556 (2013): 31 sub-zone polygons, FAR 7 (\u0E22.\u0E59-\u0E54: FAR 6) and OSR 4.5-5%",
-      buildingTypes: [...TYPES2],
+      buildingTypes: [...TYPES3],
       limits: { maxVertices: MAX_VERTICES, maxAreaM2: MAX_AREA, maxEdgeWidthM: LIMITS.maxWidth, maxGapM: LIMITS.maxGap },
       notCovered: "Other zones, basements, parapets, FAR bonuses, parking, EIA, unit layouts, fire lanes and landscape (shown as not assessed)."
     },
@@ -3133,7 +3272,12 @@ function resolveZoneCode(zones, code) {
 }
 function getRules(ctx, a) {
   return guard(async () => {
-    if (!TYPES2.includes(a.buildingType)) return fail2("invalid-input", `building_type must be one of ${TYPES2.join(", ")}`);
+    const missing = [];
+    if (a.zone === void 0 && (a.lat === void 0 || a.lng === void 0)) missing.push({ field: "zone or lat/lng", ask: "Where is the site? (a map pin, an address to look up, or the \u0E22.9 sub-zone code such as Y9-23)" });
+    if (a.buildingType === void 0) missing.push(ASK_TYPE);
+    if (missing.length) return needsDetail(missing, "The rules differ by zone and building type.");
+    const bt = a.buildingType;
+    if (!TYPES3.includes(bt)) return fail2("invalid-input", `building_type must be one of ${TYPES3.join(", ")}`);
     const y9 = await ctx.data.zonesY9();
     let z2;
     if (a.zone !== void 0) {
@@ -3146,14 +3290,14 @@ function getRules(ctx, a) {
       z2 = y9.find((q) => q.sub === fz.zone.code) ?? null;
       if (!z2) return fail2("unknown-zone", "zone not found");
     } else {
-      return fail2("invalid-input", 'give either zone (eg "Y9-23") or lat and lng');
+      return fail2("invalid-input", 'give either zone (eg "Y9-23") or both lat and lng');
     }
-    const t = TYPE_PARAMS[a.buildingType];
-    const ids = RULE_ORDER.filter((id) => !ONLY_FOR[id] || ONLY_FOR[id].includes(a.buildingType));
+    const t = TYPE_PARAMS[bt];
+    const ids = RULE_ORDER.filter((id) => !ONLY_FOR[id] || ONLY_FOR[id].includes(bt));
     return {
       ok: true,
       zone: zoneOut(z2),
-      buildingType: { id: a.buildingType, label: t.label, dwelling: t.dwelling, defaultFloorHeightsM: t.floorH },
+      buildingType: { id: bt, label: t.label, dwelling: t.dwelling, defaultFloorHeightsM: t.floorH },
       limits: {
         far: `total floor area <= ${z2.far} x plot area (Z16-FAR)`,
         osr: `open space >= ${z2.osr}% of total floor area (Z16-OSR)`,
@@ -3168,6 +3312,7 @@ function getRules(ctx, a) {
 }
 function detectRoads(ctx, ringIn) {
   return guard(async () => {
+    if (ringIn === void 0 || Array.isArray(ringIn) && ringIn.length === 0) return needsDetail([ASK_RING], "Roads are detected along the plot outline, so the plot corners are needed.");
     const rr = readRing(ringIn, "lonlat");
     if (!rr.ok) return rr;
     const s = await site(ctx, rr.ring);
@@ -3187,11 +3332,24 @@ function detectRoads(ctx, ringIn) {
       edges: edgeRows(p.ring, s.edges),
       roads: s.edges.map((e, i) => ({ e, i })).filter(({ e }) => e.role !== "private").map(({ e, i }) => ({ index: i, role: e.role, widthM: e.width, gapM: e.gap ?? 0, ...e.label ? { label: e.label } : {} })),
       note: "Edges are those of buildableRing: the drawn plot, snapped to a right-of-way within 1.5 m and with any part on the right-of-way cut away. Widths are measured across the city right-of-way polygons. Pass corrections to evaluate_plot as edges: [{ index, role, width, gap }].",
-      appLink: appLink(ctx, { ring: rr.ring, type: "condo", edges: {}, station: false, relief: true, floorH: null }),
-      appLinkNote: "Opens the plot in the 3D web app as a condo with the detected roads; evaluate_plot returns a shareLink carrying every option. Nothing is stored on a server.",
+      ...linkFields(
+        ctx,
+        { ring: rr.ring, type: "condo", edges: {}, station: false, relief: true, floorH: null },
+        "appLink",
+        "Opens the plot in the 3D web app as a condo with the detected roads; evaluate_plot returns a shareLink carrying the building type and every option. Nothing is stored on a server."
+      ),
       disclaimer: DISCLAIMER
     };
   });
+}
+function linkFields(ctx, st, key, note, unavailable) {
+  const chk = st ? verifiedLink(ctx, st) : { url: null, reason: unavailable?.reason ?? "no outline on the map" };
+  if (chk.url) return { [key]: chk.url, [`${key}Note`]: note };
+  const u = st ? { reason: chk.reason, then: "Report the figures without a link; do not build an app URL yourself." } : unavailable;
+  return {
+    [key]: null,
+    [`${key}Unavailable`]: { reason: u.reason, ...u.askUser ? { askUser: u.askUser } : {}, then: u.then }
+  };
 }
 function envOut(e) {
   return {
@@ -3243,27 +3401,41 @@ function summarize(r) {
 function evaluatePlot(ctx, a) {
   return guard(async () => {
     const units = a.units ?? "lonlat";
-    if (!TYPES2.includes(a.buildingType)) return fail2("invalid-input", `building_type must be one of ${TYPES2.join(", ")}`);
+    const missing = [];
+    if (a.ring === void 0 || Array.isArray(a.ring) && a.ring.length === 0) {
+      missing.push(units === "m" ? { field: "ring", ask: "What are the plot's dimensions (or its corners in metres)?" } : ASK_RING);
+    }
+    if (a.buildingType === void 0) missing.push(ASK_TYPE);
+    if (units === "m" && a.zone === void 0) missing.push({ field: "zone", ask: "Which \u0E22.9 sub-zone is the plot in (eg Y9-23), or where is it so the zone can be looked up?" });
+    if (missing.length) return needsDetail(missing, "These inputs decide the result.");
+    const type = a.buildingType;
+    if (!TYPES3.includes(type)) return fail2("invalid-input", `building_type must be one of ${TYPES3.join(", ")}`);
+    let floorH = null;
     if (a.floorHeights) {
       const { ground, typical } = a.floorHeights;
       if (!isNum3(ground) || !isNum3(typical) || ground < 2.4 || ground > 10 || typical < 2.4 || typical > 10) return fail2("invalid-input", "floor heights must be 2.4-10 m");
+      floorH = { ground: r3(ground), typical: r3(typical) };
     }
     if (a.hotelRooms !== void 0 && (!Number.isInteger(a.hotelRooms) || a.hotelRooms < 1 || a.hotelRooms > 1e5)) return fail2("invalid-input", "hotel_rooms must be a positive whole number");
+    const rooms = type === "hotel" ? a.hotelRooms : void 0;
+    const notes = [];
+    if (a.hotelRooms !== void 0 && rooms === void 0) notes.push(`hotel_rooms ignored: the building type is ${type}, not hotel.`);
     const rr = readRing(a.ring, units);
     if (!rr.ok) return rr;
     let input;
     let zone;
     let plotInfo = {};
-    let shareLink = null;
+    let link;
+    const checkWithUser = [];
     let edgeList;
     const station = a.nearStation ?? false;
     const relief = a.widerRoadRelief ?? true;
     const common = {
-      type: a.buildingType,
+      type,
       nearStation: station,
       widerRoadRelief: relief,
-      ...a.floorHeights ? { floorH: { ground: a.floorHeights.ground, typical: a.floorHeights.typical } } : {},
-      ...a.hotelRooms !== void 0 ? { hotelRooms: a.hotelRooms } : {}
+      ...floorH ? { floorH } : {},
+      ...rooms !== void 0 ? { hotelRooms: rooms } : {}
     };
     if (units === "lonlat") {
       if (a.zone !== void 0) return fail2("invalid-input", 'zone is only taken with units "m"; a lon/lat plot gets the zone that holds most of it');
@@ -3286,9 +3458,16 @@ function evaluatePlot(ctx, a) {
         removedOnRightOfWayM2: r2(s2.prep.removed),
         ...s2.prep.snaps.length ? { snappedEdges: s2.prep.snaps.map((x) => ({ drawnEdge: x.edge, byM: r2(x.by) })) } : {}
       };
-      shareLink = appLink(ctx, { ring: rr.ring, type: a.buildingType, edges: ov.map, station, relief, floorH: a.floorHeights ?? null, hotelRooms: a.hotelRooms ?? null });
+      link = linkFields(ctx, { ring: rr.ring, type, edges: ov.map, station, relief, floorH, hotelRooms: rooms ?? null }, "shareLink", LINK_NOTE);
+      if (!ui.some((e) => e.role === "road")) checkWithUser.push("No side of this plot faces a public road in the city map, which blocks the high-rise regime. Does the plot have road access? If so, which side, and how wide is the road? (pass it as edges)");
+      if (s2.prep.drawnArea > 0 && s2.prep.removed / s2.prep.drawnArea > 0.05) checkWithUser.push(`${r2(s2.prep.removed)} m2 of the outline lay on public right-of-way and was cut away. Are the corners right?`);
+      if (s2.share < 0.999) checkWithUser.push(`Only ${Math.round(s2.share * 100)}% of the plot is in ${s2.zone.sub}; its rules are used for the whole plot. Is the outline right?`);
     } else {
-      if (a.zone === void 0) return fail2("invalid-input", 'units "m" needs zone (eg "Y9-23"): a plot in metres has no location');
+      link = linkFields(ctx, null, "shareLink", LINK_NOTE, {
+        reason: "a plot given in metres has no place on the map, so the web app cannot show it",
+        askUser: [ASK_RING.ask],
+        then: 'The figures above stand. If the user wants it in 3D, ask where the plot is, then call evaluate_plot with its corners as [lon, lat] (units "lonlat"); roads then come from the city map and can be corrected with edges.'
+      });
       const z2 = resolveZoneCode(await ctx.data.zonesY9(), a.zone);
       if (!z2) return fail2("unknown-zone", `unknown \u0E22.9 zone code "${a.zone}"; use eg "\u0E22.\u0E59-\u0E52\u0E53" or "Y9-23"`);
       zone = z2;
@@ -3318,12 +3497,14 @@ function evaluatePlot(ctx, a) {
       headline: headline(out),
       inputs: {
         units,
-        buildingType: a.buildingType,
+        buildingType: type,
         nearStation: station,
         widerRoadRelief: relief,
-        floorHeightsM: a.floorHeights ?? TYPE_PARAMS[a.buildingType].floorH,
-        ...a.hotelRooms !== void 0 ? { hotelRooms: a.hotelRooms } : {}
+        floorHeightsM: floorH ?? TYPE_PARAMS[type].floorH,
+        ...rooms !== void 0 ? { hotelRooms: rooms } : {}
       },
+      ...notes.length ? { notes } : {},
+      ...checkWithUser.length ? { checkWithUser } : {},
       zone: zoneOut(zone),
       plot: { ...s.plot, ...plotInfo, edges: edgeList },
       regimes: s.regimes,
@@ -3331,8 +3512,7 @@ function evaluatePlot(ctx, a) {
       rulesApplied: s.rulesApplied,
       rulesNotApplied: s.rulesNotApplied,
       warnings: s.warnings,
-      shareLink,
-      shareLinkNote: shareLink ? LINK_NOTE : "No share link for a plot in metres: it has no place on the map. Give the plot as [lon, lat] corners to get one."
+      ...link
     };
   });
 }
@@ -3424,7 +3604,7 @@ ${TOOLS.map(([n, i, r]) => `<tr><td><code>${n}</code></td><td>${esc(i)}</td><td>
 </table>
 <p>Resource <code>rules://y9</code>: the full cited rule table. Prompt <code>feasibility_report</code>: a short report for a plot, using the tools.</p>
 <p class="mut">Typical flow: <code>find_zone</code> \u2192 <code>detect_roads</code> (check the widths; pass corrections as <code>edges: [{index, role, width, gap}]</code>) \u2192 <code>evaluate_plot</code> \u2192 open its <code>shareLink</code> to see the plot in 3D.</p>
-<p class="mut"><code>shareLink</code> opens the web app on the same plot with the same inputs (edge overrides, station, relief, floor heights, hotel rooms) and so the same figures. Nothing is stored: the whole state sits in the URL after <code>#</code>.</p>
+<p class="mut"><code>shareLink</code> opens the web app on the same plot with the same inputs (edge overrides, station, relief, floor heights, hotel rooms) and so the same figures. Nothing is stored: the whole state sits in the URL after <code>#</code>. A link is given only when the app is checked to rebuild the same inputs from it; otherwise the result says why and what to ask the user. Missing inputs (plot, building type) return <code>needs-detail</code> with the questions to ask, never a guessed default.</p>
 
 <h2>Scope and limits</h2>
 <ul>
@@ -3446,10 +3626,12 @@ var SERVER_NAME = "bkk-feasibility";
 var SERVER_VERSION = "1.0.0";
 var INSTRUCTIONS = `Bangkok zone \u0E22.9 (Y9) building feasibility, read-only and deterministic (no LLM inside).
 Typical flow: find_zone(lat, lng) to check the site is in \u0E22.9 -> detect_roads(ring) to see which plot edges face a road and how wide it is -> evaluate_plot(ring, building_type) for the rules, the low- and high-rise envelopes, three designs with rule checklists and a share link that opens the plot in the 3D web app.
-Rings are [lon, lat] pairs (longitude first), at most ${MAX_VERTICES} corners and 200,000 m2. Every result is a feasibility aid, not a legal opinion; say so when you report it.`;
+Rings are [lon, lat] pairs (longitude first), at most ${MAX_VERTICES} corners and 200,000 m2. Every result is a feasibility aid, not a legal opinion; say so when you report it.
+Never guess a plot location, corners, road widths or the building type. If you lack one, call the tool without it: it answers code "needs-detail" with askUser questions. Put those questions (and any askUser / checkWithUser items in other results) to the user, then call again.
+Only share app links the tools return (shareLink, appLink). When a link is null, the result says why and what to ask; never build an app URL yourself.`;
 var READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
-var ring = z.array(z.array(z.number()).describe('[lon, lat] in decimal degrees, longitude first (or [x, y] metres with units "m")')).max(5e3).describe(`Plot outline: [lon, lat] corners, open or closed, 3-${MAX_VERTICES} corners, at most 200,000 m2`);
-var buildingType = z.enum(TYPES2).describe("condo | apartment | office | hotel");
+var ring = z.array(z.array(z.number()).describe('[lon, lat] in decimal degrees, longitude first (or [x, y] metres with units "m")')).max(5e3).optional().describe(`Plot outline: [lon, lat] corners, open or closed, 3-${MAX_VERTICES} corners, at most 200,000 m2. If you do not have the corners, omit it: the tool says what to ask the user`);
+var buildingType = z.enum(TYPES3).optional().describe("condo | apartment | office | hotel. Ask the user if unknown; omit rather than guess and the tool says what to ask");
 function result(v) {
   return {
     content: [{ type: "text", text: JSON.stringify(v, null, 1) }],
@@ -3511,7 +3693,7 @@ function createServer(ctx) {
     "evaluate_plot",
     {
       title: "Evaluate a plot",
-      description: 'Full feasibility of a plot: the rules applied with their values, both regimes (low-rise and high-rise: floors, height, permitted floor area, FAR reached, binding rule), three designs with pass / fail / not-assessed checklists, and a share link that opens the plot in the 3D web app. Roads are detected from the city map; correct them with edges overrides (indices from detect_roads). With units "m" the ring is in metres (an abstract plot): give zone and the road edges yourself.',
+      description: 'Full feasibility of a plot: the rules applied with their values, both regimes (low-rise and high-rise: floors, height, permitted floor area, FAR reached, binding rule), three designs with pass / fail / not-assessed checklists, and shareLink: a web-app URL that opens the plot in 3D with the same inputs, given only when the app is checked to rebuild the same inputs from it (otherwise shareLinkUnavailable says why and what to ask). Roads are detected from the city map; correct them with edges overrides (indices from detect_roads). With units "m" the ring is in metres (an abstract plot, no link): give zone and the road edges yourself. Missing inputs return needs-detail with the questions to ask the user.',
       inputSchema: {
         ring,
         building_type: buildingType,

@@ -10,7 +10,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { evaluate } from '../src/engine/evaluate.js';
 import type { EngineInput } from '../src/engine/types.js';
 import { readHash } from '../src/ui/state';
-import { DISCLAIMER, summarize } from '../mcp/core';
+import { DISCLAIMER, summarize, verifiedLink } from '../mcp/core';
 import { SiteData, diskSource } from '../mcp/data';
 import { createHandler } from '../mcp/http';
 import { SOI38_RING } from '../mcp/landing';
@@ -118,7 +118,7 @@ describe('tools', () => {
     const h = await tool('get_rules', { lat: 13.72092, lng: 100.57957, building_type: 'hotel' });
     expect(h.v.rules.map((r: { id: string }) => r.id)).toContain('Z16-HOTEL');
     expect((await tool('get_rules', { zone: 'Y9-99', building_type: 'condo' })).v.code).toBe('unknown-zone');
-    expect((await tool('get_rules', { building_type: 'condo' })).v.code).toBe('invalid-input');
+    expect((await tool('get_rules', { building_type: 'condo' })).v.code).toBe('needs-detail');
   });
 
   it('detect_roads: the Soi 38 demo plot fronts a road with a measured width', async () => {
@@ -152,7 +152,10 @@ describe('tools', () => {
     // golden figures (test/golden.test.ts): high regime chosen, 29 floors
     expect(v.regimes.chosen).toBe('high');
     expect(v.regimes.high.floors).toBe(29);
+    // no place on the map: no link, and the agent is told what to ask for one
     expect(v.shareLink).toBeNull();
+    expect(v.shareLinkUnavailable.reason).toMatch(/no place on the map/);
+    expect(v.shareLinkUnavailable.askUser[0]).toMatch(/Where exactly is the plot/);
     expect(v.disclaimer).toBe(DISCLAIMER);
   });
 
@@ -236,9 +239,61 @@ describe('share link: the URL alone reproduces the evaluation (no server state)'
     expect(est.shareLink).not.toContain('hr=');
   });
 
+  it('a gap of 1e-7 m is written as plain decimals and still round-trips', async () => {
+    const a = (await tool('evaluate_plot', { ring: SOI38, building_type: 'condo', edges: [{ index: 0, role: 'road', width: 12.3456789, gap: 1e-7 }], detail: 'full' })).v;
+    expect(a.shareLink).toContain('e=0:r12.346g0');
+    const b = (await tool('evaluate_plot', argsFromLink(a.shareLink))).v;
+    expect(b.regimes).toEqual(a.regimes);
+  });
+
+  it('hotel_rooms on a condo is ignored, as in the app, and said so', async () => {
+    const { v } = await tool('evaluate_plot', { ring: SOI38, building_type: 'condo', hotel_rooms: 300 });
+    expect(v.inputs.hotelRooms).toBeUndefined();
+    expect(v.notes[0]).toMatch(/hotel_rooms ignored/);
+    expect(v.shareLink).not.toContain('hr=');
+  });
+
+  it('no link is handed out when the app could not read it back the same', () => {
+    const ctx = { data, appUrl: ORIGIN };
+    const st = { ring: SOI38, type: 'condo' as const, edges: {}, station: false, relief: true, floorH: null };
+    expect(verifiedLink(ctx, st).url).toMatch(/^https:\/\/example\.test\/#p=/);
+    // floor heights the app refuses (< 2.4 m): the link would open different inputs
+    const bad = verifiedLink(ctx, { ...st, floorH: { ground: 2, typical: 3 } });
+    expect(bad.url).toBeNull();
+    expect(bad.reason).toMatch(/floor heights/);
+    expect(verifiedLink(ctx, { ...st, ring: null }).url).toBeNull();
+  });
+
   it('detect_roads also links to the app', async () => {
     const { v } = await tool('detect_roads', { ring: SOI38 });
     expect(v.appLink).toBe(`${ORIGIN}/#p=${SOI38.map((q) => `${q[0].toFixed(7)},${q[1].toFixed(7)}`).join(';')}&t=condo`);
+  });
+});
+
+describe('asks for missing details instead of guessing', () => {
+  it('evaluate_plot without building type or plot: needs-detail with questions', async () => {
+    const t = await tool('evaluate_plot', { ring: SOI38 });
+    expect(t.isError).toBe(true);
+    expect(t.v).toMatchObject({ ok: false, code: 'needs-detail', missing: [{ field: 'building_type' }] });
+    expect(t.v.askUser[0]).toMatch(/condo, an apartment building, an office or a hotel/);
+    expect(t.v.then).toMatch(/do not guess/);
+    const r = await tool('evaluate_plot', {});
+    expect(r.v.missing.map((m: { field: string }) => m.field)).toEqual(['ring', 'building_type']);
+  });
+
+  it('detect_roads without a plot and get_rules without a site: needs-detail', async () => {
+    expect((await tool('detect_roads', {})).v).toMatchObject({ code: 'needs-detail', missing: [{ field: 'ring' }] });
+    const g = await tool('get_rules', {});
+    expect(g.v.missing.map((m: { field: string }) => m.field)).toEqual(['zone or lat/lng', 'building_type']);
+  });
+
+  it('a plot with no road in the map data asks the user to confirm road access', async () => {
+    const base = (await tool('detect_roads', { ring: SOI38 })).v;
+    const edges = base.roads.map((r: { index: number }) => ({ index: r.index, role: 'private' }));
+    const { v } = await tool('evaluate_plot', { ring: SOI38, building_type: 'condo', edges });
+    expect(v.ok).toBe(true);
+    expect(v.checkWithUser.some((q: string) => /road access/.test(q))).toBe(true);
+    expect(v.shareLink).toBeTruthy();
   });
 });
 
@@ -256,7 +311,7 @@ describe('typed errors', () => {
     ['road narrower than 1 m', { ring: SOI38, edges: [{ index: 0, role: 'road', width: 0.5 }] }, 'invalid-override'],
     ['width on a neighbour edge', { ring: SOI38, edges: [{ index: 0, role: 'private', width: 5 }] }, 'invalid-override'],
     ['floor height 1 m', { ring: SOI38, floor_heights: { ground: 1, typical: 3 } }, 'invalid-input'],
-    ['metres without a zone', { ring: G1.ring, units: 'm' }, 'invalid-input'],
+    ['metres without a zone', { ring: G1.ring, units: 'm' }, 'needs-detail'],
     ['zone on a lon/lat plot', { ring: SOI38, zone: 'Y9-23' }, 'invalid-input'],
   ];
   for (const [name, args, code] of cases) {
@@ -265,6 +320,10 @@ describe('typed errors', () => {
       expect(isError).toBe(true);
       expect(v).toMatchObject({ ok: false, code });
       expect(typeof v.message).toBe('string');
+      // every error says what to do next, and errors needing the user say what to ask
+      expect(typeof v.then).toBe('string');
+      if (['too-few-points', 'self-intersection', 'outside-scope', 'needs-detail'].includes(code)) expect(v.askUser.length).toBeGreaterThan(0);
+      expect(v.shareLink).toBeUndefined();
     });
   }
 
